@@ -1,0 +1,20 @@
+/* ===== COMPARACIÓN MES ===== */
+.dash-cmp {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  margin-top: 6px;
+}
+.dash-cmp.pos     { background: var(--accent-l); color: var(--accent-d); }
+.dash-cmp.neg     { background: var(--red-l);    color: var(--red); }
+.dash-cmp.neutral { background: var(--bg3);       color: var(--txt2); }
+
+/* Responsive reportes */
+@media (max-width: 768px) {
+  #page-reportes [style*="grid-template-columns:1fr 1fr 1fr"] {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+  }
+}
