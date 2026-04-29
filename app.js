@@ -1,32 +1,34 @@
 /**
- * app.js
- * Estado central (store), login/logout, navegación, UI helpers.
+ * app.js — BazarHub
+ * Estado central, login/logout, navegación, UI helpers.
  * Depende de: firebase.js
+ *
+ * SEGURIDAD:
+ * - Las contraseñas se guardan hasheadas (SHA-256 via Web Crypto API).
+ * - No hay contraseñas hardcodeadas ni hints de demo.
+ * - Al primer arranque, si no hay usuarios en Firebase, se muestra
+ *   el wizard de configuración inicial para crear la contraseña del admin.
  */
 
+// ===== UTILIDADES DE HASH =====
+
+async function hashPass(plain) {
+  const enc = new TextEncoder().encode(plain);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyPass(plain, hashed) {
+  return (await hashPass(plain)) === hashed;
+}
+
 // ===== ESTADO CENTRAL =====
-// Todo el estado mutable de la aplicación vive aquí.
+
 const store = {
   // Datos
-  users: [
-    { id: 'admin',  name: 'Administrador',   role: 'admin',  pass: 'admin123', avatar: '👑' },
-    { id: 'caja1',  name: 'Cajero Principal', role: 'cajero', pass: 'caja123',  avatar: '🧾' },
-  ],
-  products: [
-    { id:1, code:'7790001001', name:'Coca-Cola 500ml',          cat:'Bebidas',    provId:1, cost:350, price:550, stock:24, minStock:6,  sold:0, revenue:0 },
-    { id:2, code:'7790001002', name:'Leche La Serenísima 1L',   cat:'Lácteos',    provId:2, cost:420, price:650, stock:15, minStock:8,  sold:0, revenue:0 },
-    { id:3, code:'7790001003', name:'Arroz Gallo Oro 1kg',      cat:'Almacén',    provId:3, cost:280, price:420, stock:30, minStock:10, sold:0, revenue:0 },
-    { id:4, code:'7790001004', name:'Jabón Dove 100g',          cat:'Perfumería', provId:4, cost:380, price:590, stock:3,  minStock:5,  sold:0, revenue:0 },
-    { id:5, code:'7790001005', name:'Lavandina 1L',             cat:'Limpieza',   provId:4, cost:220, price:350, stock:0,  minStock:4,  sold:0, revenue:0 },
-    { id:6, code:'7790001006', name:'Papas Fritas Pringles',    cat:'Snacks',     provId:3, cost:450, price:680, stock:18, minStock:6,  sold:0, revenue:0 },
-    { id:7, code:'7790001007', name:'Aceite Girasol 900ml',     cat:'Almacén',    provId:3, cost:510, price:780, stock:12, minStock:5,  sold:0, revenue:0 },
-  ],
-  proveedores: [
-    { id:1, name:'Coca-Cola FEMSA',       cat:'Bebidas',  contact:'Carlos Méndez', phone:'11 4444-5555', email:'ventas@femsa.com.ar',    days:2, notes:'Pago a 30 días.' },
-    { id:2, name:'SanCor Distribución',   cat:'Lácteos',  contact:'Laura Gómez',   phone:'11 3333-2222', email:'lgomez@sancor.com',       days:1, notes:'Entrega martes y jueves' },
-    { id:3, name:'Distribuidora Norte SA',cat:'Almacén',  contact:'Miguel Torres', phone:'11 6666-7777', email:'mtorres@dnorte.com.ar',   days:3, notes:'Descuento 5% al contado' },
-    { id:4, name:'Unilever Argentina',    cat:'Limpieza', contact:'Sofía Ríos',    phone:'11 8888-1111', email:'srios@unilever.com',       days:7, notes:'Pedido mínimo $80.000' },
-  ],
+  users: [],          // cargados desde Firebase — sin contraseñas en texto plano
+  products: [],
+  proveedores: [],
   sales: [],
   orders: [],
   movimientos: [],
@@ -66,9 +68,14 @@ const store = {
 
   // Orden de compra en curso
   ocItems: [],
+
+  // Control de bloqueo por intentos fallidos
+  loginAttempts: 0,
+  loginLockedUntil: 0,
 };
 
 // ===== CONSTANTES DE PRESENTACIÓN =====
+
 const DELIVERY_LABELS = { 1: '24 hs', 2: '48 hs', 3: '72 hs', 7: '1 semana', 15: 'Quincenal' };
 const METHOD_LABELS = { cash: '💵 Efectivo', card: '💳 Tarjeta', transfer: '🏦 Transferencia' };
 const MOV_TYPE_LABELS = { venta: 'Venta', entrada: 'Entrada', ajuste: 'Ajuste', devolucion: 'Devolución', merma: 'Merma' };
@@ -184,6 +191,86 @@ function formatMoney(amount) {
   return '$' + amount.toLocaleString();
 }
 
+// ===== WIZARD DE PRIMER ARRANQUE =====
+// Se muestra cuando no hay usuarios en Firebase (instalación nueva).
+
+function showSetupWizard() {
+  const existing = document.getElementById('setup-wizard');
+  if (existing) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'setup-wizard';
+  overlay.style.cssText = `
+    position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;
+    display:flex;align-items:center;justify-content:center;padding:20px;
+  `;
+  overlay.innerHTML = `
+    <div style="background:var(--bg2,#fff);border-radius:14px;padding:28px;max-width:400px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+      <div style="font-size:28px;text-align:center;margin-bottom:6px">🔐</div>
+      <div style="font-size:18px;font-weight:700;text-align:center;margin-bottom:4px">Configuración inicial</div>
+      <div style="font-size:13px;color:var(--txt2,#666);text-align:center;margin-bottom:20px">
+        Primera vez que usás BazarHub. Creá la contraseña del administrador.
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:5px">
+          Contraseña administrador
+        </label>
+        <input type="password" id="setup-pass1" placeholder="Mínimo 6 caracteres"
+          style="width:100%;padding:10px 12px;border:1.5px solid var(--brd,#ddd);border-radius:8px;font-size:14px;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:20px">
+        <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:5px">
+          Confirmar contraseña
+        </label>
+        <input type="password" id="setup-pass2" placeholder="Repetí la contraseña"
+          style="width:100%;padding:10px 12px;border:1.5px solid var(--brd,#ddd);border-radius:8px;font-size:14px;box-sizing:border-box">
+      </div>
+      <div id="setup-err" style="display:none;color:#c0392b;font-size:12px;margin-bottom:12px;padding:8px 12px;background:#fdf0ee;border-radius:6px"></div>
+      <button onclick="finishSetup()"
+        style="width:100%;padding:12px;background:var(--accent,#222);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+        Crear cuenta y entrar →
+      </button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('setup-pass1').focus();
+}
+
+async function finishSetup() {
+  const p1 = document.getElementById('setup-pass1').value;
+  const p2 = document.getElementById('setup-pass2').value;
+  const errEl = document.getElementById('setup-err');
+
+  errEl.style.display = 'none';
+
+  if (p1.length < 6) {
+    errEl.textContent = 'La contraseña debe tener al menos 6 caracteres';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (p1 !== p2) {
+    errEl.textContent = 'Las contraseñas no coinciden';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const hashed = await hashPass(p1);
+  const adminUser = {
+    id: 'admin',
+    name: 'Administrador',
+    role: 'admin',
+    passHash: hashed,
+    avatar: '👑',
+  };
+
+  store.users.push(adminUser);
+  await saveUser(adminUser);
+
+  document.getElementById('setup-wizard').remove();
+  renderUserGrid();
+  toast('¡BazarHub configurado! Ya podés ingresar.', 'ok');
+}
+
 // ===== LOGIN =====
 
 function renderUserGrid() {
@@ -196,6 +283,11 @@ function renderUserGrid() {
       <div class="rl" style="pointer-events:none">${u.role === 'admin' ? 'Administrador' : 'Cajero'}</div>
     </div>
   `).join('');
+
+  // Si no hay usuarios, mostrar wizard
+  if (store.users.length === 0) {
+    grid.innerHTML = '<div style="text-align:center;color:var(--txt2);font-size:13px;padding:12px">Cargando...</div>';
+  }
 }
 
 function selectUser(id) {
@@ -205,9 +297,22 @@ function selectUser(id) {
   });
 }
 
-function doLogin() {
-  const pass = document.getElementById('login-pass').value;
+// Bloqueo por intentos fallidos (5 intentos → 2 minutos de espera)
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_MS   = 2 * 60 * 1000;
+
+async function doLogin() {
   const errEl = document.getElementById('login-err');
+
+  // ¿Está bloqueado?
+  if (store.loginLockedUntil > Date.now()) {
+    const secs = Math.ceil((store.loginLockedUntil - Date.now()) / 1000);
+    errEl.textContent = `Demasiados intentos. Esperá ${secs}s`;
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const pass = document.getElementById('login-pass').value;
   const user = store.users.find(u => u.id === store.selectedUserId);
 
   if (!user) {
@@ -215,11 +320,27 @@ function doLogin() {
     errEl.style.display = 'block';
     return;
   }
-  if (pass !== user.pass) {
+
+  // Verificar hash
+  const ok = await verifyPass(pass, user.passHash);
+
+  if (!ok) {
+    store.loginAttempts++;
+    if (store.loginAttempts >= MAX_ATTEMPTS) {
+      store.loginLockedUntil = Date.now() + LOCKOUT_MS;
+      store.loginAttempts = 0;
+      errEl.textContent = 'Demasiados intentos. Bloqueado 2 minutos.';
+    } else {
+      const restantes = MAX_ATTEMPTS - store.loginAttempts;
+      errEl.textContent = `Contraseña incorrecta. ${restantes} intento${restantes === 1 ? '' : 's'} restante${restantes === 1 ? '' : 's'}.`;
+    }
     errEl.style.display = 'block';
     return;
   }
 
+  // Login exitoso
+  store.loginAttempts = 0;
+  store.loginLockedUntil = 0;
   errEl.style.display = 'none';
   store.currentUser = user;
   document.getElementById('login-pass').value = '';
@@ -287,7 +408,6 @@ function go(page) {
   document.getElementById('topbar-title').textContent = PAGE_TITLES[page] || page;
   closeSidebar();
 
-  // Renderizar la página correspondiente
   const renders = {
     ventas:      () => updateCajaBar(),
     quicksale:   () => openQuickSale(),
@@ -463,7 +583,6 @@ function renderRanking() {
       </div>`;
   }).join('');
 
-  // Ranking por categoría
   const cats = {};
   store.products.forEach(p => {
     if (!cats[p.cat]) cats[p.cat] = { qty: 0, rev: 0 };
@@ -527,7 +646,7 @@ async function saveUserForm() {
     id: 'caj' + store.nextUserId++,
     name,
     role: 'cajero',
-    pass,
+    passHash: await hashPass(pass),
     avatar: document.getElementById('u-avatar').value,
   };
   store.users.push(u);
@@ -544,7 +663,8 @@ async function changeCajeroPass(id) {
   if (!val || val.length < 4) { toast('Mínimo 4 caracteres', 'err'); return; }
   const u = store.users.find(x => x.id === id);
   if (u) {
-    u.pass = val;
+    u.passHash = await hashPass(val);
+    delete u.pass; // por si quedó alguna versión vieja en texto plano
     await saveUser(u);
     input.value = '';
     toast('Contraseña actualizada');
@@ -565,7 +685,8 @@ async function changeAdminPass() {
   if (!val || val.length < 4) { showMsg('msg-admin', 'Mínimo 4 caracteres', 'err'); return; }
   const admin = store.users.find(u => u.role === 'admin');
   if (admin) {
-    admin.pass = val;
+    admin.passHash = await hashPass(val);
+    delete admin.pass;
     await saveUser(admin);
   }
   document.getElementById('admin-pass-new').value = '';
@@ -574,7 +695,18 @@ async function changeAdminPass() {
 
 // ===== INIT =====
 (function init() {
-  renderUserGrid();
+  // Primero cargamos usuarios desde Firebase antes de mostrar el grid
+  waitForFirebase(async () => {
+    await loadUsersFromFirebase();
+
+    if (store.users.length === 0) {
+      // Primera vez: wizard de configuración
+      renderUserGrid();
+      showSetupWizard();
+    } else {
+      renderUserGrid();
+    }
+  });
 
   const btn  = document.getElementById('login-btn');
   const pass = document.getElementById('login-pass');
