@@ -806,7 +806,9 @@ function _renderHistorialDevoluciones() {
 function _renderHistorialCajas() {
   const tb  = document.getElementById('caja-hist-tb');
   const em  = document.getElementById('caja-hist-empty');
-  const all = [...store.cajaHistory, ...(store.cajaAbierta ? [store.cajaAbierta] : [])];
+  // Solo cajas cerradas correctamente + la abierta actual si existe
+  const cerradas = store.cajaHistory.filter(c => !c.abierta && c.cierre && c.inicio);
+  const all = [...cerradas, ...(store.cajaAbierta ? [store.cajaAbierta] : [])];
   if (!all.length) { if (tb) tb.innerHTML = ''; if (em) em.style.display = 'block'; return; }
   if (em) em.style.display = 'none';
   tb.innerHTML = [...all].reverse().map(c => {
