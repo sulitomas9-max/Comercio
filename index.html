@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>BazarHub</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="toast" class="toast"></div>
+<div id="overlay" class="overlay" onclick="closeSidebar()"></div>
+
+<div id="login">
+  <div class="login-wrap">
+    <div class="login-logo">
+      <div class="login-dot">●</div>
+      <div class="login-title">BazarHub</div>
+      <div class="login-sub">Sistema de gestión</div>
+    </div>
+    <div id="login-err" class="login-err">Usuario o contraseña incorrectos</div>
+    <div class="fld">
+      <label>Usuario</label>
+      <input type="text" id="login-user" placeholder="Tu nombre de usuario" autocomplete="username" autocapitalize="none">
+    </div>
+    <div class="fld">
+      <label>Contraseña</label>
+      <input type="password" id="login-pass" placeholder="••••••" autocomplete="current-password">
+    </div>
+    <button class="login-btn" id="login-btn">Ingresar →</button>
+  </div>
+</div>
+
+<div id="app">
+
+  <div class="sidebar" id="sidebar">
+    <div class="sb-head">
+      <div class="sb-logo"><span>●</span> BazarHub</div>
+      <div class="sb-user">
+        <div class="sb-av" id="sb-av"></div>
+        <div>
+          <div class="sb-uname" id="sb-uname"></div>
+          <div class="sb-urole" id="sb-urole"></div>
+        </div>
+        <button class="sb-out" onclick="doLogout()">Salir</button>
+      </div>
+    </div>
+    <div id="nav-menu"></div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+        <div class="topbar-title" id="topbar-title">Ventas</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="conn-badge" class="conn-badge online" title="Conectado a Firebase">● Online</span>
+        <button class="dark-toggle" onclick="toggleDark()" id="dark-btn">🌙 Oscuro</button>
+      </div>
+    </div>
+
+    <div class="page-content">
+
+      <!-- VENTAS -->
+      <div class="page act" id="page-ventas">
+        <div class="caja-bar cerrada" id="caja-bar">
+          <div class="caja-bar-main">
+            <div class="caja-info">
+              <div class="dot-pulse dp-off" id="caja-dot"></div>
+              <div>
+                <div class="caja-txt-title" id="caja-bar-title">Caja cerrada</div>
+                <div class="caja-txt-sub" id="caja-bar-sub">Abrí la caja para empezar a vender</div>
+              </div>
+            </div>
+            <div class="caja-actions" id="caja-actions">
+              <button class="btn pri sm" onclick="openAbrirCaja()">Abrir caja</button>
+            </div>
+          </div>
+          <div class="caja-saldo-strip" id="caja-saldo-strip" style="display:none">
+            <div class="caja-saldo-item"><div class="csi-label">Inicial</div><div class="csi-val pos" id="csi-inicial">$0</div></div>
+            <div class="caja-saldo-item"><div class="csi-label">Ventas efectivo</div><div class="csi-val pos" id="csi-ventas">$0</div></div>
+            <div class="caja-saldo-item"><div class="csi-label">Retiros</div><div class="csi-val neg" id="csi-retiros">$0</div></div>
+            <div class="caja-saldo-item"><div class="csi-label">En caja ahora</div><div class="csi-val pos" id="csi-saldo">$0</div></div>
+          </div>
+        </div>
+
+        <div class="venta-wrap">
+          <div class="venta-left">
+            <div class="sec" style="flex-shrink:0">
+              <div id="msg-venta" class="msg"></div>
+              <div class="scan-bar" style="margin-bottom:10px">
+                <input id="barcode-in" class="scan-input" placeholder="📡 Código de barras..."
+                  onkeydown="if(event.key==='Enter') scanBarcode()" autocomplete="off">
+                <button class="btn pri" onclick="scanBarcode()" style="padding:12px 16px;font-size:14px;font-weight:600">Agregar</button>
+              </div>
+              <div class="search-wrap">
+                <input id="search-prod" placeholder="🔍 Buscar producto por nombre..."
+                  oninput="filterProds()" style="width:100%;font-size:14px;padding:11px 14px">
+                <div class="search-results" id="search-results"></div>
+              </div>
+            </div>
+
+            <div class="cart-box" id="cart-box">
+              <div class="cart-empty" id="cart-empty">
+                <div style="font-size:36px;margin-bottom:10px">🛒</div>
+                <div style="font-size:14px">Escaneá o buscá un producto para agregar</div>
+              </div>
+              <div id="cart-header" style="display:none" class="cart-header">
+                <div>Producto</div>
+                <div style="text-align:center">Cantidad</div>
+                <div style="text-align:right">Subtotal</div>
+                <div></div>
+              </div>
+              <div id="cart-list"></div>
+            </div>
+          </div>
+
+          <div class="venta-right" id="venta-right">
+            <div class="venta-right-toggle" id="vr-toggle" onclick="toggleCobroPanel()">
+              <div class="vr-toggle-left">
+                <span>💳</span>
+                <span>Cobro — Total: <span class="vr-toggle-total" id="vr-total-label">$0</span></span>
+              </div>
+              <span class="vr-toggle-icon">⌃</span>
+            </div>
+            <div class="vr-body">
+              <div class="cobro-box">
+                <div class="sec-title">Resumen</div>
+                <div class="total-line">
+                  <span style="font-size:12px;color:var(--txt2)">Subtotal</span>
+                  <span id="v-sub">$0</span>
+                </div>
+                <div class="total-line" id="v-desc-row" style="display:none">
+                  <span style="font-size:12px;color:var(--red)">Descuento</span>
+                  <span id="v-desc-val" style="color:var(--red);font-weight:600"></span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;margin:8px 0">
+                  <label style="font-size:11px;color:var(--txt2);white-space:nowrap">Descuento %</label>
+                  <input type="number" id="desc-pct" min="0" max="100" placeholder="0"
+                    style="width:70px;font-size:14px;font-weight:700;text-align:center"
+                    oninput="updateTotal()">
+                </div>
+                <div class="total-line" style="border-top:1px solid var(--brd);margin-top:4px;padding-top:8px">
+                  <span style="font-size:14px;font-weight:600">Total</span>
+                  <span class="total-big" id="v-total">$0</span>
+                </div>
+              </div>
+              <div class="cobro-box">
+                <div class="sec-title">Método de pago</div>
+                <div class="pay-methods">
+                  <div class="pm sel" id="pm-cash" onclick="setPay('cash')"><span class="pm-ico">💵</span>Efectivo</div>
+                  <div class="pm" id="pm-card" onclick="setPay('card')"><span class="pm-ico">💳</span>Tarjeta</div>
+                  <div class="pm" id="pm-transfer" onclick="setPay('transfer')"><span class="pm-ico">🏦</span>Transferencia</div>
+                </div>
+                <div id="cash-row">
+                  <div style="font-size:11px;color:var(--txt2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em;font-weight:500">Monto recibido</div>
+                  <input type="number" id="cash-recv" placeholder="$0" style="width:100%;font-size:18px;font-weight:700" oninput="calcChange()">
+                  <div id="vuelto" class="vuelto"></div>
+                </div>
+              </div>
+              <button class="cobrar-btn" id="cobrar-btn" onclick="processSale()" disabled>Cobrar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DASHBOARD -->
+      <div class="page" id="page-dashboard">
+        <div class="cards">
+          <div class="card"><div class="card-lbl">Ventas hoy</div><div class="card-val" id="dash-hoy-count">0</div></div>
+          <div class="card"><div class="card-lbl">Total hoy</div><div class="card-val g" id="dash-hoy-total">$0</div></div>
+          <div class="card"><div class="card-lbl">Semana</div><div class="card-val b" id="dash-semana-total">$0</div></div>
+          <div class="card"><div class="card-lbl">Ticket promedio</div><div class="card-val" id="dash-ticket-prom">$0</div><div class="dash-cmp neutral" id="dash-mes-cmp">-</div></div>
+          <div class="card"><div class="card-lbl">Total este mes</div><div class="card-val g" id="dash-mes-total">$0</div></div>
+        </div>
+        <div class="sec" style="margin-bottom:14px"><div class="sec-title">Ventas por mes</div><div id="dash-ventas-por-mes"></div></div>
+        <div class="sec" style="margin-bottom:14px"><div class="sec-title">Alertas del sistema</div><div id="alerts-panel"></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div class="sec"><div class="sec-title">Top productos</div><div id="dash-top-prods"></div></div>
+          <div class="sec"><div class="sec-title">Ventas por método (hoy)</div><div id="dash-pay-chart"></div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px">
+          <div class="sec"><div class="sec-title">Ventas por hora (hoy)</div><canvas id="dash-hourly-chart" style="width:100%;height:90px;display:block"></canvas></div>
+          <div class="sec"><div class="sec-title">Ventas por categoría (total)</div><div id="dash-cat-chart"></div></div>
+        </div>
+      </div>
+
+      <!-- MODO RÁPIDO -->
+      <div class="page" id="page-quicksale">
+        <div class="qs-layout">
+          <div class="qs-left">
+            <div class="qs-search-bar">
+              <div class="qs-search-hint">↑↓ Navegar · Enter Agregar · F2 Cobrar · Esc Limpiar</div>
+              <input id="qs-search" class="qs-search-input"
+                placeholder="🔍 Buscar producto o código de barras..."
+                oninput="qsSearch(this.value)"
+                onkeydown="qsKeydown(event)"
+                autocomplete="off" autocorrect="off" spellcheck="false">
+            </div>
+            <div id="qs-results" class="qs-results"></div>
+          </div>
+          <div class="qs-right">
+            <div class="qs-cart-header"><span>Carrito</span><span id="qs-total" class="qs-total-display">$0</span></div>
+            <div id="qs-cart-empty" class="qs-cart-empty"><div style="font-size:30px;margin-bottom:8px">🛒</div><div>Agregá productos con Enter</div></div>
+            <div id="qs-cart-list" class="qs-cart-list"></div>
+            <div class="qs-cobro">
+              <div class="qs-pay-methods">
+                <div class="pm sel" id="qs-pm-cash" onclick="qsSetPay('cash')"><span class="pm-ico">💵</span>Efectivo</div>
+                <div class="pm" id="qs-pm-card" onclick="qsSetPay('card')"><span class="pm-ico">💳</span>Tarjeta</div>
+                <div class="pm" id="qs-pm-transfer" onclick="qsSetPay('transfer')"><span class="pm-ico">🏦</span>Transf.</div>
+              </div>
+              <div id="qs-cash-row">
+                <input type="number" id="qs-cash-recv" placeholder="Monto recibido..."
+                  style="width:100%;font-size:16px;font-weight:700;margin-bottom:6px" oninput="qsCalcChange()">
+                <div id="qs-vuelto" class="vuelto"></div>
+              </div>
+              <button class="cobrar-btn" id="qs-cobrar-btn" onclick="qsFinalizarVenta()" disabled>⚡ Cobrar (F2)</button>
+              <button class="btn" style="width:100%;margin-top:8px" onclick="closeQuickSale()">Volver a ventas</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- HISTORIAL -->
+      <div class="page" id="page-historial">
+        <div class="cards">
+          <div class="card"><div class="card-lbl">Ventas</div><div class="card-val" id="h-count">0</div></div>
+          <div class="card"><div class="card-lbl">Total período</div><div class="card-val g" id="h-today">$0</div></div>
+          <div class="card"><div class="card-lbl">Ticket promedio</div><div class="card-val" id="h-avg">$0</div></div>
+          <div class="card"><div class="card-lbl">Mejor método</div><div class="card-val b" id="h-method" style="font-size:13px">-</div></div>
+        </div>
+        <div class="sec">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+            <div class="sec-title" style="margin:0">Ventas registradas</div>
+            <button class="btn sm" onclick="exportCSV('ventas')">⬇ Exportar CSV</button>
+          </div>
+          <div id="hist-search-bar"></div>
+          <table>
+            <thead><tr><th>#</th><th>Fecha/Hora</th><th>Cajero</th><th>Productos</th><th>Total</th><th>Método</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="hist-table"></tbody>
+          </table>
+          <div id="hist-empty" style="text-align:center;padding:24px;color:var(--txt3);font-size:13px">Sin ventas todavía</div>
+        </div>
+        <div class="sec" style="margin-top:14px">
+          <div class="sec-title">Devoluciones y anulaciones</div>
+          <table>
+            <thead><tr><th>Fecha</th><th>Venta #</th><th>Tipo</th><th>Productos</th><th>Total</th><th>Motivo</th><th>Usuario</th></tr></thead>
+            <tbody id="dev-hist-table"></tbody>
+          </table>
+          <div id="dev-hist-empty" style="text-align:center;padding:16px;color:var(--txt3);font-size:13px">Sin devoluciones</div>
+        </div>
+        <div class="sec">
+          <div class="sec-title">Historial de cajas</div>
+          <table>
+            <thead><tr><th>Apertura</th><th>Cajero</th><th>Inicial</th><th>Ventas ef.</th><th>Retiros</th><th>Esperado</th><th>Contado</th><th>Diferencia</th><th>Estado</th></tr></thead>
+            <tbody id="caja-hist-tb"></tbody>
+          </table>
+          <div id="caja-hist-empty" style="text-align:center;padding:16px;color:var(--txt3);font-size:13px">Sin historial de cajas</div>
+        </div>
+      </div>
+
+      <!-- STOCK -->
+      <div class="page" id="page-stock">
+        <div class="cards">
+          <div class="card"><div class="card-lbl">Total productos</div><div class="card-val" id="st-total">0</div></div>
+          <div class="card"><div class="card-lbl">Stock bajo</div><div class="card-val w" id="st-low">0</div></div>
+          <div class="card"><div class="card-lbl">Sin stock</div><div class="card-val r" id="st-out">0</div></div>
+          <div class="card"><div class="card-lbl">Valor inventario</div><div class="card-val g" id="st-val">$0</div></div>
+        </div>
+        <div class="sec">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+            <div class="sec-title" style="margin:0">Inventario</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <input placeholder="Buscar..." oninput="renderStock(this.value)" style="width:180px">
+              <button class="btn sm" onclick="exportCSV('stock')">⬇ Exportar CSV</button>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th>Código</th><th>Producto</th><th>Proveedor</th><th>Precio</th><th id="th-costo">Costo</th><th>Stock</th><th>Estado</th><th>Ajustar</th></tr></thead>
+            <tbody id="stock-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- MOVIMIENTOS -->
+      <div class="page" id="page-movimientos">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <select id="mov-fprod" onchange="renderMovimientos()" style="font-size:13px"><option value="">Todos los productos</option></select>
+            <select id="mov-ftype" onchange="renderMovimientos()" style="font-size:13px">
+              <option value="">Todos los tipos</option>
+              <option value="venta">Venta</option><option value="entrada">Entrada</option>
+              <option value="ajuste">Ajuste</option><option value="devolucion">Devolución</option><option value="merma">Merma</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn sm" onclick="exportCSV('movimientos')">⬇ Exportar CSV</button>
+            <button class="btn pri sm" id="btn-nuevo-mov" onclick="openMovModal()" style="display:none">+ Agregar</button>
+          </div>
+        </div>
+        <div class="sec">
+          <table>
+            <thead><tr><th>Fecha y hora</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Stock ant.</th><th>Stock nuevo</th><th>Quién</th><th>Motivo</th><th id="th-mov-acc"></th></tr></thead>
+            <tbody id="mov-table"></tbody>
+          </table>
+          <div id="mov-empty" style="text-align:center;padding:24px;color:var(--txt3);font-size:13px">Sin movimientos registrados</div>
+        </div>
+      </div>
+
+      <!-- PRODUCTOS -->
+      <div class="page" id="page-productos">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px;gap:8px">
+          <button class="btn sm" onclick="exportCSV('stock')">⬇ Exportar CSV</button>
+          <button class="btn pri" id="btn-nuevo-prod" onclick="openProdModal()" style="display:none">+ Nuevo producto</button>
+        </div>
+        <div class="sec">
+          <table>
+            <thead><tr><th>Código</th><th>Nombre</th><th>Categoría</th><th>Proveedor</th><th id="th-costo-prod">Costo</th><th>Precio</th><th id="th-margen">Margen</th><th id="th-acc-prod"></th></tr></thead>
+            <tbody id="prod-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- PROVEEDORES -->
+      <div class="page" id="page-proveedores">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <div class="cards" style="flex:1;margin:0;min-width:0">
+            <div class="card"><div class="card-lbl">Proveedores</div><div class="card-val b" id="pv-total">0</div></div>
+            <div class="card"><div class="card-lbl">Órdenes pendientes</div><div class="card-val w" id="pv-pending">0</div></div>
+            <div class="card"><div class="card-lbl">Deuda total</div><div class="card-val r" id="pv-deuda">$0</div></div>
+          </div>
+          <button class="btn pri" onclick="openProvModal()" style="flex-shrink:0">+ Nuevo proveedor</button>
+        </div>
+        <div id="prov-list"></div>
+      </div>
+
+      <!-- CTA CTE -->
+      <div class="page" id="page-ctacte">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:14px;gap:8px;flex-wrap:wrap">
+          <select id="cc-prov-sel" onchange="renderCtaCte()" style="font-size:13px"><option value="">Todos los proveedores</option></select>
+          <button class="btn sm" onclick="exportCSV('ctacte')">⬇ Exportar CSV</button>
+          <button class="btn pri sm" onclick="openPagoModal()">+ Registrar pago</button>
+        </div>
+        <div class="cards" id="cc-cards"></div>
+        <div class="sec">
+          <table>
+            <thead><tr><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead>
+            <tbody id="cc-table"></tbody>
+          </table>
+          <div id="cc-empty" style="text-align:center;padding:24px;color:var(--txt3);font-size:13px">Sin movimientos</div>
+        </div>
+      </div>
+
+      <!-- ÓRDENES -->
+      <div class="page" id="page-ordenes">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+          <button class="btn pri" onclick="openOCModal()">+ Nueva orden</button>
+        </div>
+        <div class="sec">
+          <table>
+            <thead><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Total</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="oc-table"></tbody>
+          </table>
+          <div id="oc-empty" style="text-align:center;padding:24px;color:var(--txt3);font-size:13px">Sin órdenes</div>
+        </div>
+      </div>
+
+      <!-- RANKING -->
+      <div class="page" id="page-ranking">
+        <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap" id="rank-filters">
+          <div class="chip sel" onclick="setRankFilter('qty', this)">Por cantidad</div>
+          <div class="chip" onclick="setRankFilter('revenue', this)">Por ingresos</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div class="sec"><div class="sec-title" id="rank-t1">Top productos</div><div id="rank-list"></div></div>
+          <div class="sec"><div class="sec-title">Por categoría</div><div id="cat-list"></div></div>
+        </div>
+      </div>
+
+      <!-- REPORTES -->
+      <div class="page" id="page-reportes">
+        <div id="rep-filtros"></div>
+        <div class="cards">
+          <div class="card"><div class="card-lbl">Ventas totales</div><div class="card-val g" id="rep-ventas">$0</div></div>
+          <div class="card"><div class="card-lbl">Costo mercadería</div><div class="card-val r" id="rep-costo">$0</div></div>
+          <div class="card"><div class="card-lbl">Ganancia bruta</div><div class="card-val g" id="rep-gan">$0</div></div>
+          <div class="card"><div class="card-lbl">Margen</div><div class="card-val b" id="rep-mg">0%</div></div>
+          <div class="card"><div class="card-lbl">Cantidad ventas</div><div class="card-val" id="rep-count">0</div></div>
+          <div class="card"><div class="card-lbl">Ticket promedio</div><div class="card-val" id="rep-ticket">$0</div></div>
+        </div>
+        <div class="sec" style="margin-bottom:14px"><div class="sec-title">Ventas por día</div><canvas id="rep-daily-chart" style="width:100%;height:120px;display:block"></canvas></div>
+        <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+          <button class="btn pri sm" onclick="exportCSV('ventas')">⬇ Ventas</button>
+          <button class="btn sm" onclick="exportCSV('stock')">⬇ Stock</button>
+          <button class="btn sm" onclick="exportCSV('movimientos')">⬇ Movimientos</button>
+          <button class="btn sm" onclick="exportCSV('ctacte')">⬇ Cta. Cte.</button>
+          <button class="btn sm" onclick="exportCSV('retiros')">⬇ Retiros</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+          <div class="sec"><div class="sec-title">Por método de pago</div><div id="rep-metodos"></div></div>
+          <div class="sec"><div class="sec-title">Por cajero</div><div id="rep-cajeros"></div></div>
+          <div class="sec"><div class="sec-title">Por categoría</div><div id="rep-categorias"></div></div>
+        </div>
+      </div>
+
+      <!-- USUARIOS -->
+      <div class="page" id="page-usuarios">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+          <button class="btn pri" onclick="openUserModal()">+ Nuevo cajero</button>
+        </div>
+        <div id="cajeros-list"></div>
+        <div class="sec" style="margin-top:6px">
+          <div class="sec-title">Contraseña administrador</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input type="password" id="admin-pass-new" placeholder="Nueva contraseña" style="flex:1;min-width:180px">
+            <button class="btn pri" onclick="changeAdminPass()">Guardar</button>
+          </div>
+          <div id="msg-admin" class="msg" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <!-- COMBOS -->
+      <div class="page" id="page-combos">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+          <button class="btn pri" onclick="openComboModal()">+ Nuevo combo</button>
+        </div>
+        <div id="combos-list"></div>
+      </div>
+
+      <!-- IMPORTAR -->
+      <div class="page" id="page-importar"></div>
+
+    </div>
+  </div>
+</div>
+
+<!-- MODALES (sin cambios) -->
+<div class="modal-bg" id="modal-presentacion">
+  <div class="modal">
+    <div class="modal-title" id="pres-prod-name">Elegí una presentación</div>
+    <div style="font-size:12px;color:var(--txt2);margin-bottom:14px" id="pres-stock"></div>
+    <div id="pres-options" style="display:flex;flex-direction:column;gap:10px"></div>
+    <div class="macts" style="margin-top:16px"><button class="btn" onclick="closeModal('modal-presentacion')">Cancelar</button></div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-combo">
+  <div class="modal wide">
+    <div class="modal-title" id="combo-modal-title">Nuevo combo</div>
+    <div id="msg-combo" class="msg"></div>
+    <div class="mfl"><label>Nombre del combo</label><input id="combo-name" placeholder="ej: Set mesa x6"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="mfl"><label>Precio especial</label><input type="number" id="combo-price" placeholder="0" style="font-size:18px;font-weight:700"></div>
+      <div class="mfl"><label>Código de barras (opcional)</label><input id="combo-code" placeholder="ej: 9990001"></div>
+    </div>
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--txt2);margin:10px 0 8px">Productos del combo</div>
+    <div id="combo-items"></div>
+    <button class="btn" style="width:100%;margin:10px 0" onclick="store._comboItems.push({prodId:'',qty:1});renderComboItems()">+ Agregar producto</button>
+    <div class="macts">
+      <button class="btn" onclick="closeModal('modal-combo')">Cancelar</button>
+      <button class="btn pri" onclick="saveCombo()">Guardar combo</button>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-ticket">
+  <div class="modal ticket-modal">
+    <div class="modal-title">Ticket de venta</div>
+    <div class="ticket-print-area" id="ticket-content"></div>
+    <div class="macts">
+      <button class="btn" onclick="window.print()">🖨 Imprimir</button>
+      <button class="btn" onclick="exportTicketPDF()">📄 PDF</button>
+      <button class="btn pri" onclick="closeModal('modal-ticket')">Cerrar</button>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-devolucion">
+  <div class="modal wide">
+    <div class="modal-title">Devolución de venta</div>
+    <div id="msg-devolucion" class="msg"></div>
+    <div class="dev-sale-info">
+      <span>Venta <strong id="dev-sale-id">#0</strong></span>
+      <span id="dev-sale-date" style="color:var(--txt2);font-size:12px"></span>
+      <span id="dev-sale-user" style="color:var(--txt2);font-size:12px"></span>
+    </div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--txt2);margin:12px 0 8px">Seleccioná los productos a devolver</div>
+    <div id="dev-items" class="dev-items-list"></div>
+    <div class="mfl" style="margin-top:12px"><label>Motivo de la devolución</label><input id="dev-motivo" placeholder="Producto defectuoso, error de venta..."></div>
+    <div class="total-line" style="border-top:1px solid var(--brd);padding-top:10px;font-weight:700;font-size:15px;margin-top:10px">
+      <span>Total a devolver</span><span id="dev-total" style="color:var(--accent)">$0</span>
+    </div>
+    <div class="macts" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <button class="btn red" id="dev-anular-btn" onclick="anularVenta(store._devSaleId)">🗑 Anular venta completa</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="closeModal('modal-devolucion')">Cancelar</button>
+        <button class="btn pri" onclick="saveDevolucion()">Confirmar devolución</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-abrir-caja">
+  <div class="modal">
+    <div class="modal-title">Abrir caja</div>
+    <div class="mfl"><label>Cajero</label><select id="caj-cajero-sel"></select></div>
+    <div class="mfl">
+      <label>Monto inicial en efectivo</label>
+      <input type="number" id="caj-inicial" placeholder="$0" style="font-size:20px;font-weight:700">
+      <div id="caj-hint-saldo" style="font-size:12px;color:var(--accent-d);margin-top:4px;display:none"></div>
+    </div>
+    <div class="mfl"><label>Nota (opcional)</label><input id="caj-nota" placeholder="Observaciones..."></div>
+    <div class="macts">
+      <button class="btn" onclick="closeModal('modal-abrir-caja')">Cancelar</button>
+      <button class="btn pri" onclick="abrirCaja()">Abrir caja</button>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-cerrar-caja">
+  <div class="modal">
+    <div class="modal-title">Cerrar caja</div>
+    <div id="caj-resumen-cierre" style="font-size:13px;display:flex;flex-direction:column;gap:6px;margin-bottom:14px;background:var(--bg3);padding:12px;border-radius:var(--rad)"></div>
+    <div class="mfl">
+      <label>Efectivo contado en caja</label>
+      <input type="number" id="caj-contado" placeholder="$0" style="font-size:20px;font-weight:700" oninput="calcDiferenciaCierre()">
+      <div style="font-size:12px;color:var(--txt2);margin-top:4px">Este monto quedará como saldo inicial de la próxima caja</div>
+    </div>
+    <div id="dif-display" style="display:none;padding:10px;border-radius:var(--rad);font-size:14px;font-weight:700;text-align:center;margin-bottom:8px"></div>
+    <div class="macts">
+      <button class="btn" onclick="closeModal('modal-cerrar-caja')">Cancelar</button>
+      <button class="btn red" onclick="cerrarCaja()">Cerrar caja</button>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-retiro">
+  <div class="modal">
+    <div class="modal-title">Retiro de caja</div>
+    <div id="msg-retiro" class="msg"></div>
+    <div style="background:var(--bg3);border-radius:var(--rad);padding:12px;margin-bottom:14px;font-size:13px">
+      <div style="color:var(--txt2);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:500">Saldo actual en caja</div>
+      <div style="font-size:22px;font-weight:700;color:var(--accent-d)" id="retiro-saldo-actual">$0</div>
+    </div>
+    <div class="mfl">
+      <label>Monto a retirar</label>
+      <input type="number" id="retiro-monto" placeholder="$0" style="font-size:20px;font-weight:700" oninput="checkRetiroMonto()">
+    </div>
+    <div id="retiro-warn" style="display:none;background:var(--red-l);color:var(--red);border-radius:var(--rad);padding:8px 12px;font-size:12px;font-weight:500;margin-bottom:8px">El monto supera el saldo disponible en caja</div>
+    <div class="mfl">
+      <label>Motivo</label>
+      <select id="retiro-motivo-sel" onchange="toggleRetiroOtro()">
+        <option value="Gastos del negocio">Gastos del negocio</option>
+        <option value="Depósito bancario">Depósito bancario</option>
+        <option value="Pago a proveedor">Pago a proveedor</option>
+        <option value="Retiro del dueño">Retiro del dueño</option>
+        <option value="otro">Otro (especificar)</option>
+      </select>
+    </div>
+    <div class="mfl" id="retiro-otro-wrap" style="display:none"><label>Especificá el motivo</label><input id="retiro-motivo-otro" placeholder="Escribí el motivo..."></div>
+    <div class="macts">
+      <button class="btn" onclick="closeModal('modal-retiro')">Cancelar</button>
+      <button class="btn warn-btn" onclick="saveRetiro()">Confirmar retiro</button>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-prod">
+  <div class="modal">
+    <div class="modal-title" id="prod-modal-title">Nuevo producto</div>
+    <div id="msg-prod" class="msg"></div>
+    <div class="mfl"><label>Código de barras</label><input id="f-code" placeholder="ej: 7790001234567"></div>
+    <div class="mfl"><label>Nombre</label><input id="f-name" placeholder="Nombre del producto"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="mfl"><label>Categoría</label><select id="f-cat"><option>Almacén</option><option>Bebidas</option><option>Lácteos</option><option>Limpieza</option><option>Perfumería</option><option>Snacks</option><option>Otros</option></select></div>
+      <div class="mfl"><label>Proveedor</label><select id="f-prov"></select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div class="mfl"><label>Costo</label><input type="number" id="f-cost" placeholder="0"></div>
+      <div class="mfl"><label>Precio</label><input type="number" id="f-price" placeholder="0"></div>
+      <div class="mfl"><label>Stock</label><input type="number" id="f-stock" placeholder="0"></div>
+    </div>
+    <div class="mfl"><label>Stock mínimo alerta</label><input type="number" id="f-minstock" placeholder="5"></div>
+    <div style="margin-top:12px">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--txt2);margin-bottom:8px">Presentaciones (sets, packs, etc.)</div>
+      <div style="font-size:11px;color:var(--txt3);margin-bottom:8px">Etiqueta · Precio · Unidades que descuenta · Código de barras (opcional)</div>
+      <div id="f-presentaciones"></div>
+    </div>
+    <div class="macts">
+      <button class="btn" onclick="closeModal('modal-prod')">Cancelar</button>
+      <button class="btn pri" onclick="saveProd()">Guardar</button>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-stock">
+  <div class="modal">
+    <div class="modal-title">Ajustar stock</div>
+    <div class="mfl"><label>Producto</label><input id="s-pname" disabled></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="mfl"><label>Stock actual</label><input id="s-cur" disabled></div>
+      <div class="mfl"><label>Nuevo stock</label><input type="number" id="s-new" placeholder="0"></div>
+    </div>
+    <div class="mfl"><label>Tipo de movimiento</label><select id="s-type"><option value="entrada">Entrada de mercadería</option><option value="ajuste">Ajuste de inventario</option><option value="devolucion">Devolución</option><option value="merma">Pérdida / merma</option></select></div>
+    <div class="mfl"><label>Nota (opcional)</label><input id="s-note" placeholder="Detalle..."></div>
+    <div class="macts"><button class="btn" onclick="closeModal('modal-stock')">Cancelar</button><button class="btn pri" onclick="saveStock()">Confirmar</button></div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-prov">
+  <div class="modal">
+    <div class="modal-title" id="prov-modal-title">Nuevo proveedor</div>
+    <div id="msg-prov" class="msg"></div>
+    <div class="mfl"><label>Nombre / Razón social</label><input id="pv-name" placeholder="Distribuidora Norte SA"></div>
+    <div class="mfl"><label>Rubro</label><select id="pv-cat"><option>Almacén</option><option>Bebidas</option><option>Lácteos</option><option>Limpieza</option><option>Perfumería</option><option>Snacks</option><option>Varios</option></select></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="mfl"><label>Contacto</label><input id="pv-contact" placeholder="Nombre vendedor"></div>
+      <div class="mfl"><label>Teléfono</label><input id="pv-phone" placeholder="11 1234-5678"></div>
+    </div>
+    <div class="mfl"><label>Email</label><input id="pv-email" type="email" placeholder="ventas@proveedor.com"></div>
+    <div class="mfl"><label>Días de entrega</label><select id="pv-days"><option value="1">24 hs</option><option value="2">48 hs</option><option value="3">72 hs</option><option value="7">1 semana</option><option value="15">Quincenal</option></select></div>
+    <div class="mfl"><label>Notas / Condiciones</label><textarea id="pv-notes" rows="2" placeholder="Condiciones de pago, mínimo de compra..."></textarea></div>
+    <div class="macts"><button class="btn" onclick="closeModal('modal-prov')">Cancelar</button><button class="btn pri" onclick="saveProv()">Guardar</button></div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-oc">
+  <div class="modal wide">
+    <div class="modal-title">Nueva orden de compra</div>
+    <div id="msg-oc" class="msg"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="mfl"><label>Proveedor</label><select id="oc-prov" onchange="loadOCProds()"></select></div>
+      <div class="mfl"><label>Entrega estimada</label><input type="date" id="oc-date"></div>
+    </div>
+    <div style="font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase;letter-spacing:.06em;margin:10px 0 8px">Productos</div>
+    <div id="oc-prod-list" style="margin-bottom:10px"></div>
+    <button class="btn" style="width:100%;margin-bottom:12px" onclick="addOCItem()">+ Agregar producto</button>
+    <div class="mfl"><label>Notas</label><textarea id="oc-notes" rows="2"></textarea></div>
+    <div class="total-line" style="border-top:1px solid var(--brd);font-weight:700;font-size:16px;padding-top:10px"><span>Total estimado</span><span id="oc-total">$0</span></div>
+    <div class="macts"><button class="btn" onclick="closeModal('modal-oc')">Cancelar</button><button class="btn pri" onclick="saveOC()">Enviar orden</button></div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-pago">
+  <div class="modal">
+    <div class="modal-title">Registrar pago a proveedor</div>
+    <div id="msg-pago" class="msg"></div>
+    <div class="mfl"><label>Proveedor</label><select id="pago-prov"></select></div>
+    <div class="mfl"><label>Monto</label><input type="number" id="pago-monto" placeholder="$0" style="font-size:20px;font-weight:700"></div>
+    <div class="mfl"><label>Método</label><select id="pago-met"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="cheque">Cheque</option></select></div>
+    <div class="mfl"><label>Referencia / comprobante</label><input id="pago-ref" placeholder="Nro. de transferencia, cheque..."></div>
+    <div class="macts"><button class="btn" onclick="closeModal('modal-pago')">Cancelar</button><button class="btn pri" onclick="savePago()">Registrar pago</button></div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-user">
+  <div class="modal">
+    <div class="modal-title">Nuevo cajero</div>
+    <div id="msg-user" class="msg"></div>
+    <div class="mfl"><label>Nombre</label><input id="u-name" placeholder="Nombre del cajero"></div>
+    <div class="mfl"><label>Contraseña</label><input type="password" id="u-pass" placeholder="Mínimo 4 caracteres"></div>
+    <div class="mfl"><label>Avatar</label><select id="u-avatar"><option value="🧾">🧾 Cajero</option><option value="👤">👤 Persona</option><option value="⭐">⭐ Estrella</option><option value="🟢">🟢 Verde</option><option value="🔵">🔵 Azul</option></select></div>
+    <div class="macts"><button class="btn" onclick="closeModal('modal-user')">Cancelar</button><button class="btn pri" onclick="saveUserForm()">Guardar</button></div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-mov">
+  <div class="modal">
+    <div class="modal-title" id="mov-modal-title">Agregar movimiento</div>
+    <div id="msg-mov" class="msg"></div>
+    <div class="mfl"><label>Producto</label><select id="mov-prod" style="width:100%"></select></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="mfl"><label>Tipo</label><select id="mov-tipo"><option value="entrada">Entrada</option><option value="ajuste">Ajuste</option><option value="devolucion">Devolución</option><option value="merma">Merma</option><option value="venta">Venta</option></select></div>
+      <div class="mfl"><label>Cantidad (+ o -)</label><input type="number" id="mov-cant" placeholder="ej: 10 o -5"></div>
+    </div>
+    <div class="mfl"><label>Motivo</label><input id="mov-motivo" placeholder="Descripción del movimiento..."></div>
+    <div class="mfl"><label>Fecha y hora</label><input id="mov-fecha" placeholder="ej: 23/4/2026, 14:30"></div>
+    <div class="macts"><button class="btn" onclick="closeModal('modal-mov')">Cancelar</button><button class="btn pri" onclick="saveMov()">Guardar</button></div>
+  </div>
+</div>
+
+<!-- SCRIPTS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  if (typeof pdfjsLib !== 'undefined') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+</script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="config.js"></script>
+<script src="firebase.js"></script>
+<script src="app.js"></script>
+<script src="caja.js"></script>
+<script src="stock.js"></script>
+<script src="dashboard.js"></script>
+<script src="quicksale.js"></script>
+<script src="importar.js"></script>
+
+</body>
+</html>
