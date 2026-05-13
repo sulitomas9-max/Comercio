@@ -81,6 +81,10 @@ function loadLocalData() {
     store.nextRetiroId  = s.nextRetiroId || 1;
     store.saldoAnterior = s.saldoAnterior || 0;
     store.cajaAbierta   = s.cajaAbierta   || null;
+    if (store.cajaAbierta) {
+      store.cajaAbierta.cajeroNombre = store.cajaAbierta.cajeroNombre || '—';
+      store.cajaAbierta.inicio       = store.cajaAbierta.inicio       || '—';
+    }
     return true;
   } catch(e) {
     console.warn('Error cargando datos locales:', e);

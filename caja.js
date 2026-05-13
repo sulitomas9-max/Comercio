@@ -36,7 +36,7 @@ function updateCajaBar() {
     dot.className = 'dot-pulse dp-on';
     document.getElementById('caja-bar-title').textContent = 'Caja abierta';
     document.getElementById('caja-bar-sub').textContent =
-      `Cajero: ${store.cajaAbierta.cajeroNombre} · Desde ${store.cajaAbierta.inicio}`;
+      `Cajero: ${store.cajaAbierta.cajeroNombre || '—'} · Desde ${store.cajaAbierta.inicio || '—'}`;
 
     const ventasEf = calcVentasEfCaja();
     const retiros  = calcRetirosCaja();
@@ -99,7 +99,7 @@ async function abrirCaja() {
   store.cajaAbierta = {
     id:           newId,
     cajeroId:     user.id,
-    cajeroNombre: user.name,
+    cajeroNombre: user.name || user.id || 'Cajero',
     inicio:       new Date().toLocaleString('es-AR'),
     inicial,
     abierta:      true,
@@ -172,7 +172,12 @@ async function cerrarCaja() {
   await saveCaja(cajaCerrada);
   await saveSaldoConfig(contado);
 
-  store.cajaHistory.push(cajaCerrada);
+  const existingIdx = store.cajaHistory.findIndex(c => c.id === cajaCerrada.id);
+  if (existingIdx >= 0) {
+    store.cajaHistory[existingIdx] = cajaCerrada;
+  } else {
+    store.cajaHistory.push(cajaCerrada);
+  }
   store.saldoAnterior = contado;
   store.cajaAbierta   = null;
 
