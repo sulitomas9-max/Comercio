@@ -65,7 +65,11 @@ function loadLocalData() {
     store.products     = s.products     || [];
     store.proveedores  = s.proveedores  || [];
     store.sales        = s.sales        || [];
-    store.cajaHistory  = s.cajaHistory  || [];
+    store.cajaHistory  = (s.cajaHistory || []).map(c => ({
+      ...c,
+      cajeroNombre: c.cajeroNombre || '—',
+      inicio:       c.inicio       || '—',
+    }));
     store.retiros      = s.retiros      || [];
     store.movimientos  = s.movimientos  || [];
     store.ctacteMovs   = s.ctacteMovs   || [];
@@ -278,9 +282,19 @@ async function getCollection(col) {
 
 // ===== CARGA DE USUARIOS (antes del login) =====
 
+function _loadUsersFromLocalStorage() {
+  try {
+    const raw = localStorage.getItem(OFFLINE_DATA_KEY);
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s.users && s.users.length) store.users = s.users;
+    }
+  } catch(e) {}
+}
+
 async function loadUsersFromFirebase() {
   if (!db || !auth.currentUser) {
-    loadLocalData();
+    _loadUsersFromLocalStorage();
     return;
   }
   try {
@@ -291,7 +305,7 @@ async function loadUsersFromFirebase() {
     if (needsMigration) console.warn('[BazarHub] Hay usuarios con contraseñas en texto plano.');
   } catch(e) {
     console.error('loadUsersFromFirebase error:', e);
-    loadLocalData();
+    _loadUsersFromLocalStorage();
   }
 }
 
