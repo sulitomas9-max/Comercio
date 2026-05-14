@@ -439,8 +439,12 @@ async function _loadCajas() {
 }
 
 async function _loadConfig() {
-  const doc = await db.collection('config').doc('saldo').get();
-  if (doc.exists) store.saldoAnterior = doc.data().valor || 0;
+  try {
+    const doc = await db.collection('config').doc('saldo').get();
+    if (doc.exists) store.saldoAnterior = doc.data().valor || 0;
+  } catch(e) {
+    console.warn('_loadConfig error:', e);
+  }
 }
 
 async function _loadUsers() {
