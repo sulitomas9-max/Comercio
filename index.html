@@ -429,6 +429,24 @@
         <div id="combos-list"></div>
       </div>
 
+      <!-- GASTOS FIJOS -->
+      <div class="page" id="page-gastos">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div class="cards" style="flex:1;margin:0;min-width:0">
+            <div class="card"><div class="card-lbl">Gastos fijos / mes</div><div class="card-val r" id="gastos-total-mes">$0</div></div>
+            <div class="card"><div class="card-lbl">Cantidad</div><div class="card-val" id="gastos-count">0</div></div>
+          </div>
+          <button class="btn pri" onclick="openGastoModal()" style="flex-shrink:0">+ Nuevo gasto</button>
+        </div>
+        <div class="sec">
+          <table>
+            <thead><tr><th>Nombre</th><th>Categoría</th><th>Monto mensual</th><th>Vencimiento</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="gastos-table"></tbody>
+          </table>
+          <div id="gastos-empty" style="text-align:center;padding:24px;color:var(--txt3);font-size:13px">Sin gastos fijos cargados</div>
+        </div>
+      </div>
+
       <!-- IMPORTAR -->
       <div class="page" id="page-importar"></div>
 
@@ -436,7 +454,7 @@
   </div>
 </div>
 
-<!-- MODALES (sin cambios) -->
+<!-- MODALES -->
 <div class="modal-bg" id="modal-presentacion">
   <div class="modal">
     <div class="modal-title" id="pres-prod-name">Elegí una presentación</div>
@@ -668,6 +686,35 @@
   </div>
 </div>
 
+<!-- MODAL GASTOS FIJOS -->
+<div class="modal-bg" id="modal-gasto">
+  <div class="modal">
+    <div class="modal-title" id="gasto-modal-title">Nuevo gasto fijo</div>
+    <div id="msg-gasto" class="msg"></div>
+    <div class="mfl"><label>Nombre</label><input id="g-name" placeholder="ej: Alquiler, Luz, Internet..."></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="mfl"><label>Categoría</label>
+        <select id="g-cat">
+          <option>Alquiler</option>
+          <option>Servicios</option>
+          <option>Sueldos</option>
+          <option>Impuestos</option>
+          <option>Logística</option>
+          <option>Marketing</option>
+          <option>Otros</option>
+        </select>
+      </div>
+      <div class="mfl"><label>Día de vencimiento</label><input type="number" id="g-venc" min="1" max="31" placeholder="ej: 10"></div>
+    </div>
+    <div class="mfl"><label>Monto mensual</label><input type="number" id="g-monto" placeholder="$0" style="font-size:20px;font-weight:700"></div>
+    <div class="mfl"><label>Notas (opcional)</label><input id="g-notas" placeholder="Observaciones..."></div>
+    <div class="macts">
+      <button class="btn" onclick="closeModal('modal-gasto')">Cancelar</button>
+      <button class="btn pri" onclick="saveGasto()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <!-- SCRIPTS -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
@@ -681,12 +728,13 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="config.js?v=5"></script>
 <script src="firebase.js?v=7"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 <script src="caja.js?v=8"></script>
 <script src="stock.js?v=5"></script>
 <script src="dashboard.js?v=5"></script>
 <script src="quicksale.js?v=5"></script>
 <script src="importar.js?v=5"></script>
+<script src="gastos.js?v=2"></script>
 
 </body>
 </html>
