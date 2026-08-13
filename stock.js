@@ -200,11 +200,12 @@ function renderProducts() {
     const marginColor = margin > 30 ? 'var(--accent)' : margin > 15 ? 'var(--warn)' : 'var(--red)';
     const hasPres = p.presentaciones?.length > 0;
     return `
-      <tr>
+      <tr${p.pendienteRevision ? ' style="background:rgba(245,158,11,.08)"' : ''}>
         <td style="font-family:var(--mono);font-size:11px;color:var(--txt2)">${p.code}</td>
         <td style="font-weight:500">
-          ${p.name}
+          ${p.pendienteRevision ? '<span title="Cargado desde la caja — revisar categoría, costo y stock" style="margin-right:5px">⚠️</span>' : ''}${p.name}
           ${hasPres ? `<div style="font-size:10px;color:var(--blue)">${p.presentaciones.length} presentaciones</div>` : ''}
+          ${p.pendienteRevision ? `<div style="font-size:10px;color:var(--warn);font-weight:600">Pendiente de revisión</div>` : ''}
         </td>
         <td>${p.cat}</td>
         <td style="font-size:12px;color:var(--txt2)">${proveedor ? proveedor.name : '-'}</td>
@@ -305,6 +306,8 @@ async function saveProd() {
   if (store.editProdId) {
     const prod = store.products.find(p => p.id === store.editProdId);
     Object.assign(prod, data);
+    // Un admin editando el producto lo da por revisado (categoría, costo, stock reales)
+    if (isAdmin) prod.pendienteRevision = false;
     await saveProduct(prod);
   } else {
     const newProd = { id: store.nextProdId++, ...data, sold: 0, revenue: 0 };
@@ -556,3 +559,4 @@ async function cancelOC(id) {
   await cancelOrderInDB(order);
   renderOrdenes(); toast('Orden cancelada');
 }
+
