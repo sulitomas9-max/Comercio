@@ -299,11 +299,65 @@ function scanBarcode() {
     }
   } else {
     const combo = (store.combos || []).find(c => c.code === code);
-    if (combo) addComboToCart(combo);
-    else toast('Código no encontrado', 'err');
+    if (combo) {
+      addComboToCart(combo);
+    } else {
+      document.getElementById('barcode-in').value = '';
+      openQuickAddModal(code);
+      return;
+    }
   }
 
   document.getElementById('barcode-in').value = '';
+  document.getElementById('barcode-in').focus();
+}
+
+// ===== ALTA RÁPIDA DE PRODUCTO DESDE LA CAJA =====
+// Se usa cuando se escanea un código que no está en la base de datos:
+// la cajera carga solo nombre + precio y el producto queda disponible
+// al instante (para esa venta y para futuras). Queda marcado con
+// pendienteRevision=true para que un admin lo complete después
+// (categoría, proveedor, costo, stock real, etc.) desde Stock.
+function openQuickAddModal(code) {
+  if (!store.cajaAbierta) { toast('Abrí la caja primero', 'err'); return; }
+  store.qaCode = code;
+  document.getElementById('qa-code').value  = code;
+  document.getElementById('qa-name').value  = '';
+  document.getElementById('qa-price').value = '';
+  document.getElementById('msg-quickadd').textContent = '';
+  openModal('modal-quickadd');
+  setTimeout(() => document.getElementById('qa-name').focus(), 50);
+}
+
+async function saveQuickAddProduct() {
+  const code  = store.qaCode;
+  const name  = document.getElementById('qa-name').value.trim();
+  const price = parseFloat(document.getElementById('qa-price').value);
+
+  if (!name)               { showMsg('msg-quickadd', 'Escribí una descripción', 'err'); return; }
+  if (!price || price <= 0) { showMsg('msg-quickadd', 'Ingresá un precio válido', 'err'); return; }
+  if (store.products.find(p => p.code === code)) { showMsg('msg-quickadd', 'Ese código ya fue cargado, escaneá de nuevo', 'err'); return; }
+
+  const newProd = {
+    id: store.nextProdId++,
+    code, name,
+    cat: 'Otros',
+    provId: null,
+    cost: 0,
+    price,
+    stock: 999,
+    minStock: 5,
+    presentaciones: [],
+    pendienteRevision: true,
+    sold: 0, revenue: 0,
+  };
+  store.products.push(newProd);
+  await saveProduct(newProd);
+
+  closeModal('modal-quickadd');
+  toast('Producto creado y agregado a la venta');
+  addToCart(newProd);
+
   document.getElementById('barcode-in').focus();
 }
 
@@ -963,3 +1017,4 @@ function toggleCobroPanel() {
 }
 
 renderCart();
+
