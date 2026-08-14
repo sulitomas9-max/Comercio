@@ -85,7 +85,6 @@ const MOV_TYPE_LABELS = { venta: 'Venta', entrada: 'Entrada', ajuste: 'Ajuste', 
 const NAV_ADMIN = [
   { sec: 'Ventas', items: [
     { id: 'ventas',     ico: '🛒', label: 'Ventas y caja' },
-    { id: 'quicksale',  ico: '⚡', label: 'Modo rápido' },
     { id: 'historial',  ico: '📋', label: 'Historial' },
     { id: 'dashboard',  ico: '📊', label: 'Dashboard' },
   ]},
@@ -109,7 +108,6 @@ const NAV_ADMIN = [
 const NAV_CAJERO = [
   { sec: 'Ventas', items: [
     { id: 'ventas',    ico: '🛒', label: 'Ventas y caja' },
-    { id: 'quicksale', ico: '⚡', label: 'Modo rápido' },
     { id: 'historial', ico: '📋', label: 'Historial' },
   ]},
   { sec: 'Inventario', items: [
@@ -121,7 +119,6 @@ const NAV_CAJERO = [
 
 const PAGE_TITLES = {
   ventas:      'Ventas y caja',
-  quicksale:   '⚡ Modo Rápido',
   historial:   'Historial',
   dashboard:   'Dashboard',
   stock:       'Stock',
@@ -472,7 +469,6 @@ function go(page) {
 
   const renders = {
     ventas:      () => updateCajaBar(),
-    quicksale:   () => openQuickSale(),
     historial:   () => renderHistory(),
     dashboard:   () => { renderDashboard(); renderAlerts(); },
     stock:       () => renderStockPage(),
