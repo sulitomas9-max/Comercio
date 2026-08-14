@@ -72,7 +72,7 @@ function renderQSResults(q) {
            data-idx="${i}">
         <div class="qs-prod-main">
           <div class="qs-prod-name">${_qsHighlight(p.name, q)}</div>
-          <div class="qs-prod-code">${p.code}</div>
+          <div class="qs-prod-code">${p.code || 'Sin código'}</div>
         </div>
         <div class="qs-prod-right">
           <div class="qs-prod-price">${formatMoney(p.price)}</div>
