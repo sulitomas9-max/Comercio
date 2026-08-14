@@ -316,6 +316,7 @@
       <div class="page" id="page-productos">
         <div style="display:flex;justify-content:flex-end;margin-bottom:12px;gap:8px">
           <button class="btn sm" onclick="exportCSV('stock')">⬇ Exportar CSV</button>
+          <button class="btn sm" id="btn-merge-prod" onclick="openMergeModal()" style="display:none">🔗 Fusionar duplicados</button>
           <button class="btn pri" id="btn-nuevo-prod" onclick="openProdModal()" style="display:none">+ Nuevo producto</button>
         </div>
         <div class="sec">
@@ -474,7 +475,13 @@
     </div>
     <div id="msg-quickadd" class="msg"></div>
     <div class="mfl"><label>Código de barras (opcional)</label><input id="qa-code" placeholder="Dejalo vacío si no tiene" autocomplete="off"></div>
-    <div class="mfl"><label>Descripción / Nombre</label><input id="qa-name" placeholder="Nombre del producto" autocomplete="off"></div>
+    <div class="mfl" style="position:relative">
+      <label>Descripción / Nombre</label>
+      <input id="qa-name" placeholder="Nombre del producto" autocomplete="off"
+        oninput="suggestProductNames('qa-name','qa-name-sug')"
+        onblur="setTimeout(()=>hideNameSuggestions('qa-name-sug'),150)">
+      <div id="qa-name-sug" class="name-sug"></div>
+    </div>
     <div class="mfl"><label>Precio de venta</label><input type="number" id="qa-price" placeholder="0" autocomplete="off"
       onkeydown="if(event.key==='Enter') saveQuickAddProduct()"></div>
     <div class="macts">
@@ -509,6 +516,42 @@
       <button class="btn" onclick="window.print()">🖨 Imprimir</button>
       <button class="btn" onclick="exportTicketPDF()">📄 PDF</button>
       <button class="btn pri" onclick="closeModal('modal-ticket')">Cerrar</button>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-etiqueta">
+  <div class="modal">
+    <div class="modal-title">Imprimir etiqueta</div>
+    <div class="etq-controls no-print">
+      <div style="display:flex;gap:6px">
+        <button class="btn sm" id="etq-mode-a4" onclick="setEtiquetaMode('a4')">Hoja A4</button>
+        <button class="btn sm" id="etq-mode-termica" onclick="setEtiquetaMode('termica')">Térmica</button>
+      </div>
+      <label style="font-size:12px;color:var(--txt2);display:flex;align-items:center;gap:6px">
+        Cantidad
+        <input type="number" id="etq-qty" min="1" max="60" value="12" style="width:60px" onchange="renderEtiquetas()">
+      </label>
+    </div>
+    <div class="etq-print-area" id="etq-print-area"></div>
+    <div class="macts">
+      <button class="btn" onclick="closeModal('modal-etiqueta')">Cerrar</button>
+      <button class="btn pri" onclick="window.print()">🖨 Imprimir</button>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modal-merge">
+  <div class="modal">
+    <div class="modal-title">🔗 Fusionar productos duplicados</div>
+    <div id="msg-merge" class="msg"></div>
+    <div style="font-size:12px;color:var(--txt2);margin-bottom:14px">
+      Elegí el producto que querés mantener y el duplicado que se va a borrar. El stock del duplicado se suma al que se mantiene.
+    </div>
+    <div class="mfl"><label>Producto que se mantiene</label><select id="merge-keep" onchange="renderMergePreview()"></select></div>
+    <div class="mfl"><label>Producto duplicado (se borra)</label><select id="merge-drop" onchange="renderMergePreview()"></select></div>
+    <div id="merge-preview"></div>
+    <div class="macts">
+      <button class="btn" onclick="closeModal('modal-merge')">Cancelar</button>
+      <button class="btn pri" onclick="confirmMergeProducts()">Fusionar</button>
     </div>
   </div>
 </div>
@@ -602,8 +645,21 @@
   <div class="modal">
     <div class="modal-title" id="prod-modal-title">Nuevo producto</div>
     <div id="msg-prod" class="msg"></div>
-    <div class="mfl"><label>Código de barras (opcional)</label><input id="f-code" placeholder="Dejalo vacío si no tiene"></div>
-    <div class="mfl"><label>Nombre</label><input id="f-name" placeholder="Nombre del producto"></div>
+    <div class="mfl">
+      <label>Código de barras (opcional)</label>
+      <div style="display:flex;gap:6px">
+        <input id="f-code" placeholder="Dejalo vacío si no tiene" style="flex:1">
+        <button type="button" class="btn sm" id="f-gencode-btn" onclick="generateInternalCode()" style="display:none;white-space:nowrap">🔧 Generar código</button>
+        <button type="button" class="btn sm" id="f-printlabel-btn" onclick="openEtiquetaModal(store.editProdId)" style="display:none;white-space:nowrap">🏷️ Etiqueta</button>
+      </div>
+    </div>
+    <div class="mfl" style="position:relative">
+      <label>Nombre</label>
+      <input id="f-name" placeholder="Nombre del producto"
+        oninput="suggestProductNames('f-name','f-name-sug')"
+        onblur="setTimeout(()=>hideNameSuggestions('f-name-sug'),150)">
+      <div id="f-name-sug" class="name-sug"></div>
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div class="mfl"><label>Categoría</label><select id="f-cat"><option>Almacén</option><option>Bebidas</option><option>Lácteos</option><option>Limpieza</option><option>Perfumería</option><option>Snacks</option><option>Otros</option></select></div>
       <div class="mfl" id="f-prov-row"><label>Proveedor</label><select id="f-prov"></select></div>
@@ -743,14 +799,15 @@
       'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   }
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/JsBarcode/3.11.5/JsBarcode.all.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="config.js?v=5"></script>
 <script src="firebase.js?v=7"></script>
-<script src="app.js?v=6"></script>
-<script src="caja.js?v=8"></script>
-<script src="stock.js?v=5"></script>
+<script src="app.js?v=7"></script>
+<script src="caja.js?v=9"></script>
+<script src="stock.js?v=6"></script>
 <script src="dashboard.js?v=5"></script>
 <script src="quicksale.js?v=5"></script>
 <script src="importar.js?v=5"></script>
