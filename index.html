@@ -100,6 +100,9 @@
                   oninput="filterProds()" style="width:100%;font-size:14px;padding:11px 14px">
                 <div class="search-results" id="search-results"></div>
               </div>
+              <div style="text-align:right;margin-top:8px">
+                <button class="btn sm" onclick="openManualAddModal()">➕ Producto sin código</button>
+              </div>
             </div>
 
             <div class="cart-box" id="cart-box">
@@ -465,12 +468,12 @@
 </div>
 <div class="modal-bg" id="modal-quickadd">
   <div class="modal">
-    <div class="modal-title">🆕 Producto no encontrado</div>
-    <div style="font-size:12px;color:var(--txt2);margin-bottom:14px">
+    <div class="modal-title" id="quickadd-title">🆕 Producto no encontrado</div>
+    <div style="font-size:12px;color:var(--txt2);margin-bottom:14px" id="quickadd-desc">
       Este código no está cargado. Escribí el nombre y el precio para venderlo ahora — después un admin puede completar el resto en Stock.
     </div>
     <div id="msg-quickadd" class="msg"></div>
-    <div class="mfl"><label>Código de barras</label><input id="qa-code" disabled></div>
+    <div class="mfl"><label>Código de barras (opcional)</label><input id="qa-code" placeholder="Dejalo vacío si no tiene" autocomplete="off"></div>
     <div class="mfl"><label>Descripción / Nombre</label><input id="qa-name" placeholder="Nombre del producto" autocomplete="off"></div>
     <div class="mfl"><label>Precio de venta</label><input type="number" id="qa-price" placeholder="0" autocomplete="off"
       onkeydown="if(event.key==='Enter') saveQuickAddProduct()"></div>
@@ -599,7 +602,7 @@
   <div class="modal">
     <div class="modal-title" id="prod-modal-title">Nuevo producto</div>
     <div id="msg-prod" class="msg"></div>
-    <div class="mfl"><label>Código de barras</label><input id="f-code" placeholder="ej: 7790001234567"></div>
+    <div class="mfl"><label>Código de barras (opcional)</label><input id="f-code" placeholder="Dejalo vacío si no tiene"></div>
     <div class="mfl"><label>Nombre</label><input id="f-name" placeholder="Nombre del producto"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div class="mfl"><label>Categoría</label><select id="f-cat"><option>Almacén</option><option>Bebidas</option><option>Lácteos</option><option>Limpieza</option><option>Perfumería</option><option>Snacks</option><option>Otros</option></select></div>
