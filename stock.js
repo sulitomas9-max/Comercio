@@ -699,4 +699,3 @@ async function confirmMergeProducts() {
   toast(`Productos fusionados. Stock de "${keep.name}": ${keep.stock}`);
 }
 
-
