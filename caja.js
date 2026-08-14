@@ -330,6 +330,7 @@ function openQuickAddModal(code) {
   document.getElementById('qa-name').value  = '';
   document.getElementById('qa-price').value = '';
   document.getElementById('msg-quickadd').textContent = '';
+  hideNameSuggestions('qa-name-sug');
   openModal('modal-quickadd');
   setTimeout(() => document.getElementById('qa-name').focus(), 50);
 }
@@ -347,6 +348,7 @@ function openManualAddModal() {
   document.getElementById('qa-name').value  = '';
   document.getElementById('qa-price').value = '';
   document.getElementById('msg-quickadd').textContent = '';
+  hideNameSuggestions('qa-name-sug');
   openModal('modal-quickadd');
   setTimeout(() => document.getElementById('qa-name').focus(), 50);
 }
