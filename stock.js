@@ -37,7 +37,7 @@ function renderStock(query = '') {
     const hasPres = p.presentaciones?.length > 0;
     return `
       <tr>
-        <td style="font-family:var(--mono);font-size:11px;color:var(--txt2)">${p.code}</td>
+        <td style="font-family:var(--mono);font-size:11px;color:var(--txt2)">${p.code || '—'}</td>
         <td style="font-weight:500">
           ${p.name}
           ${hasPres ? `<span style="font-size:10px;color:var(--blue);font-weight:600;margin-left:4px">• ${p.presentaciones.length} presentaciones</span>` : ''}
@@ -201,7 +201,7 @@ function renderProducts() {
     const hasPres = p.presentaciones?.length > 0;
     return `
       <tr${p.pendienteRevision ? ' style="background:rgba(245,158,11,.08)"' : ''}>
-        <td style="font-family:var(--mono);font-size:11px;color:var(--txt2)">${p.code}</td>
+        <td style="font-family:var(--mono);font-size:11px;color:var(--txt2)">${p.code || '—'}</td>
         <td style="font-weight:500">
           ${p.pendienteRevision ? '<span title="Cargado desde la caja — revisar categoría, costo y stock" style="margin-right:5px">⚠️</span>' : ''}${p.name}
           ${hasPres ? `<div style="font-size:10px;color:var(--blue)">${p.presentaciones.length} presentaciones</div>` : ''}
@@ -282,8 +282,8 @@ async function saveProd() {
   const isAdmin = store.currentUser?.role === 'admin';
   const code = document.getElementById('f-code').value.trim();
   const name = document.getElementById('f-name').value.trim();
-  if (!code || !name) { showMsg('msg-prod', 'Completá código y nombre', 'err'); return; }
-  if (store.products.find(p => p.code === code && p.id !== store.editProdId)) {
+  if (!name) { showMsg('msg-prod', 'Completá el nombre', 'err'); return; }
+  if (code && store.products.find(p => p.code === code && p.id !== store.editProdId)) {
     showMsg('msg-prod', 'Código ya existe', 'err'); return;
   }
 
