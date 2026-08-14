@@ -194,6 +194,10 @@ function renderProducts() {
   const btnNuevo = document.getElementById('btn-nuevo-prod');
   if (btnNuevo) btnNuevo.style.display = 'inline-block';
 
+  // Fusionar duplicados: solo admin (borra productos)
+  const btnMerge = document.getElementById('btn-merge-prod');
+  if (btnMerge) btnMerge.style.display = isAdmin ? 'inline-block' : 'none';
+
   document.getElementById('prod-table').innerHTML = store.products.map(p => {
     const margin    = p.cost > 0 ? Math.round((p.price - p.cost) / p.price * 100) : 0;
     const proveedor = store.proveedores.find(v => v.id === p.provId);
@@ -215,6 +219,7 @@ function renderProducts() {
         <td>
           <div style="display:flex;gap:5px">
             <button class="btn sm" onclick="openProdModal(${p.id})">Editar</button>
+            ${p.code ? `<button class="btn sm" onclick="openEtiquetaModal(${p.id})" title="Imprimir etiqueta">🏷️</button>` : ''}
             ${isAdmin ? `<button class="btn sm red" onclick="delProd(${p.id})" style="padding:5px 8px">✕</button>` : ''}
           </div>
         </td>
@@ -235,6 +240,13 @@ function openProdModal(id = null) {
   document.getElementById('f-code').value     = prod.code     || '';
   document.getElementById('f-name').value     = prod.name     || '';
   document.getElementById('f-cat').value      = prod.cat      || 'Almacén';
+  hideNameSuggestions('f-name-sug');
+
+  // Generar código interno / imprimir etiqueta: solo tiene sentido en edición
+  const genBtn   = document.getElementById('f-gencode-btn');
+  const printBtn = document.getElementById('f-printlabel-btn');
+  if (genBtn)   genBtn.style.display   = (id && !prod.code) ? 'inline-block' : 'none';
+  if (printBtn) printBtn.style.display = (id && prod.code)  ? 'inline-block' : 'none';
   document.getElementById('f-prov').value     = prod.provId   || '';
   document.getElementById('f-cost').value     = prod.cost     || '';
   document.getElementById('f-price').value    = prod.price    || '';
@@ -559,4 +571,132 @@ async function cancelOC(id) {
   await cancelOrderInDB(order);
   renderOrdenes(); toast('Orden cancelada');
 }
+
+// ===== CÓDIGO INTERNO Y ETIQUETAS =====
+// Para productos que se cargaron sin código de barras (desde la caja o
+// desde Stock) y ahora conviene que lo tengan, para escanearlos más rápido
+// la próxima vez. El código se genera localmente (prefijo 20, uso interno,
+// no colisiona con códigos reales de fábrica) y se puede imprimir en una
+// etiqueta con su código de barras.
+
+function generateInternalCode() {
+  const id = store.editProdId;
+  if (!id) { toast('Guardá el producto primero', 'err'); return; }
+  const prod = store.products.find(p => p.id === id);
+  if (!prod || prod.code) return;
+
+  let code = '20' + String(id).padStart(6, '0');
+  while (store.products.find(p => p.code === code && p.id !== id)) {
+    code = '20' + String(Date.now()).slice(-6);
+  }
+
+  document.getElementById('f-code').value = code;
+  const genBtn = document.getElementById('f-gencode-btn');
+  if (genBtn) genBtn.style.display = 'none';
+  toast('Código generado — guardá el producto para aplicarlo');
+}
+
+let etq = { prodId: null, mode: 'a4' };
+
+function openEtiquetaModal(prodId) {
+  const prod = store.products.find(p => p.id === prodId);
+  if (!prod) { toast('Guardá el producto primero', 'err'); return; }
+  if (!prod.code) { toast('Este producto no tiene código de barras', 'err'); return; }
+  etq.prodId = prodId;
+  setEtiquetaMode('a4');
+  openModal('modal-etiqueta');
+}
+
+function setEtiquetaMode(mode) {
+  etq.mode = mode;
+  const a4Btn  = document.getElementById('etq-mode-a4');
+  const tmBtn  = document.getElementById('etq-mode-termica');
+  if (a4Btn) a4Btn.classList.toggle('pri', mode === 'a4');
+  if (tmBtn) tmBtn.classList.toggle('pri', mode === 'termica');
+  document.getElementById('etq-qty').value = mode === 'a4' ? 12 : 1;
+  renderEtiquetas();
+}
+
+function renderEtiquetas() {
+  const prod = store.products.find(p => p.id === etq.prodId);
+  const area = document.getElementById('etq-print-area');
+  if (!area) return;
+  if (!prod) { area.innerHTML = ''; return; }
+
+  const qty = Math.max(1, parseInt(document.getElementById('etq-qty').value) || 1);
+  area.className = 'etq-print-area etq-' + etq.mode;
+  area.innerHTML = Array.from({ length: qty }, (_, i) => `
+    <div class="etq-label">
+      <svg class="etq-barcode" id="etq-svg-${i}"></svg>
+      <div class="etq-name">${prod.name}</div>
+      <div class="etq-price">${formatMoney(prod.price)}</div>
+    </div>`).join('');
+
+  for (let i = 0; i < qty; i++) {
+    if (typeof JsBarcode === 'undefined') continue;
+    try {
+      JsBarcode('#etq-svg-' + i, prod.code, {
+        format: 'CODE128', width: 1.6, height: 40, fontSize: 11, margin: 2, displayValue: true,
+      });
+    } catch (e) { /* código con caracteres no soportados por CODE128: se ignora el dibujo */ }
+  }
+}
+
+// ===== FUSIONAR PRODUCTOS DUPLICADOS =====
+// Para cuando un mismo producto sin código terminó cargado más de una vez
+// (por ejemplo por typos). Suma el stock de ambos en el que se mantiene y
+// borra el duplicado, dejando registrado el movimiento en el historial.
+
+function openMergeModal() {
+  const opts = store.products
+    .map(p => `<option value="${p.id}">${p.name} (stock: ${p.stock}${p.code ? ', cód: ' + p.code : ''})</option>`)
+    .join('');
+  document.getElementById('merge-keep').innerHTML = '<option value="">Elegí el producto que se mantiene...</option>' + opts;
+  document.getElementById('merge-drop').innerHTML = '<option value="">Elegí el duplicado a borrar...</option>' + opts;
+  document.getElementById('msg-merge').textContent = '';
+  document.getElementById('merge-preview').innerHTML = '';
+  openModal('modal-merge');
+}
+
+function renderMergePreview() {
+  const keepId = parseInt(document.getElementById('merge-keep').value);
+  const dropId = parseInt(document.getElementById('merge-drop').value);
+  const box = document.getElementById('merge-preview');
+
+  if (!keepId || !dropId) { box.innerHTML = ''; return; }
+  if (keepId === dropId) { box.innerHTML = '<div class="msg err" style="display:block">Elegí dos productos distintos</div>'; return; }
+
+  const keep = store.products.find(p => p.id === keepId);
+  const drop = store.products.find(p => p.id === dropId);
+  if (!keep || !drop) return;
+
+  box.innerHTML = `<div class="merge-box">
+    Se va a borrar <strong>${drop.name}</strong> (stock ${drop.stock}) y sumar su stock a <strong>${keep.name}</strong>.<br>
+    Stock final de <strong>${keep.name}</strong>: <strong>${keep.stock + drop.stock}</strong>.
+  </div>`;
+}
+
+async function confirmMergeProducts() {
+  const keepId = parseInt(document.getElementById('merge-keep').value);
+  const dropId = parseInt(document.getElementById('merge-drop').value);
+  if (!keepId || !dropId || keepId === dropId) { showMsg('msg-merge', 'Elegí dos productos distintos', 'err'); return; }
+
+  const keep = store.products.find(p => p.id === keepId);
+  const drop = store.products.find(p => p.id === dropId);
+  if (!keep || !drop) return;
+
+  const prevStock = keep.stock;
+  keep.stock += drop.stock;
+  const mov = registrarMovimiento(keep.id, 'ajuste', drop.stock, prevStock, keep.stock, `Fusión con "${drop.name}" (borrado)`);
+
+  store.products = store.products.filter(p => p.id !== dropId);
+
+  await saveStockAdjustment(keep, mov);
+  await removeProduct(dropId);
+
+  closeModal('modal-merge');
+  renderProducts();
+  toast(`Productos fusionados. Stock de "${keep.name}": ${keep.stock}`);
+}
+
 
