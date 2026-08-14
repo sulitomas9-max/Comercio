@@ -1108,5 +1108,44 @@ function toggleCobroPanel() {
   if (vr) vr.classList.toggle('expanded');
 }
 
+// ===== ESCANEO GLOBAL EN VENTAS =====
+// Permite escanear un código de barras en cualquier momento estando en
+// Ventas, sin necesidad de hacer click en la barra de código primero.
+// Si el foco está en otro campo de texto (búsqueda, un modal, etc.) no
+// interfiere, para no romper la escritura manual.
+let scanBuf = '';
+let scanBufTime = 0;
+
+document.addEventListener('keydown', function(e) {
+  const pageVentas = document.getElementById('page-ventas');
+  if (!pageVentas || !pageVentas.classList.contains('act')) { scanBuf = ''; return; }
+  if (document.querySelector('.modal-bg.on')) { scanBuf = ''; return; }
+
+  const active = document.activeElement;
+  const tag = active ? active.tagName : '';
+  const isOtherField = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && active.id !== 'barcode-in';
+  if (isOtherField) { scanBuf = ''; return; }
+  if (active && active.id === 'barcode-in') { scanBuf = ''; return; }
+
+  const now = Date.now();
+  if (now - scanBufTime > 300) scanBuf = '';
+  scanBufTime = now;
+
+  if (e.key === 'Enter') {
+    if (scanBuf.length >= 3) {
+      e.preventDefault();
+      document.getElementById('barcode-in').value = scanBuf;
+      scanBuf = '';
+      scanBarcode();
+    }
+    return;
+  }
+
+  if (e.key.length === 1) {
+    scanBuf += e.key;
+    e.preventDefault();
+  }
+});
+
 renderCart();
 
