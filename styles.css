@@ -633,9 +633,11 @@ tr:hover td { background: var(--bg3); }
 }
 .sr-item:last-child { border-bottom: none; }
 .sr-item:hover { background: var(--bg3); }
+.sr-item.sel { background: var(--accent-l); border-left: 3px solid var(--accent); }
 .sr-name { font-size: 13px; font-weight: 500; }
 .sr-meta { font-size: 11px; color: var(--txt3); margin-top: 1px; }
 .sr-price { font-size: 15px; font-weight: 700; color: var(--accent); }
+.search-hint { font-size: 11px; color: var(--txt3); font-family: var(--mono); margin-top: 6px; letter-spacing: .02em; }
 
 /* ===== CARRITO ===== */
 .cart-box {
