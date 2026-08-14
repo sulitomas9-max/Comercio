@@ -96,9 +96,11 @@
                 <button class="btn pri" onclick="scanBarcode()" style="padding:12px 16px;font-size:14px;font-weight:600">Agregar</button>
               </div>
               <div class="search-wrap">
-                <input id="search-prod" placeholder="🔍 Buscar producto por nombre..."
-                  oninput="filterProds()" style="width:100%;font-size:14px;padding:11px 14px">
+                <input id="search-prod" placeholder="🔍 Buscar producto por nombre o código..."
+                  oninput="filterProds()" onkeydown="searchKeydown(event)" autocomplete="off"
+                  style="width:100%;font-size:14px;padding:11px 14px">
                 <div class="search-results" id="search-results"></div>
+                <div class="search-hint">↑↓ Navegar · Enter Agregar · Esc Limpiar</div>
               </div>
               <div style="text-align:right;margin-top:8px">
                 <button class="btn sm" onclick="openManualAddModal()">➕ Producto sin código</button>
@@ -190,43 +192,7 @@
         </div>
       </div>
 
-      <!-- MODO RÁPIDO -->
-      <div class="page" id="page-quicksale">
-        <div class="qs-layout">
-          <div class="qs-left">
-            <div class="qs-search-bar">
-              <div class="qs-search-hint">↑↓ Navegar · Enter Agregar · F2 Cobrar · Esc Limpiar</div>
-              <input id="qs-search" class="qs-search-input"
-                placeholder="🔍 Buscar producto o código de barras..."
-                oninput="qsSearch(this.value)"
-                onkeydown="qsKeydown(event)"
-                autocomplete="off" autocorrect="off" spellcheck="false">
-            </div>
-            <div id="qs-results" class="qs-results"></div>
-          </div>
-          <div class="qs-right">
-            <div class="qs-cart-header"><span>Carrito</span><span id="qs-total" class="qs-total-display">$0</span></div>
-            <div id="qs-cart-empty" class="qs-cart-empty"><div style="font-size:30px;margin-bottom:8px">🛒</div><div>Agregá productos con Enter</div></div>
-            <div id="qs-cart-list" class="qs-cart-list"></div>
-            <div class="qs-cobro">
-              <div class="qs-pay-methods">
-                <div class="pm sel" id="qs-pm-cash" onclick="qsSetPay('cash')"><span class="pm-ico">💵</span>Efectivo</div>
-                <div class="pm" id="qs-pm-card" onclick="qsSetPay('card')"><span class="pm-ico">💳</span>Tarjeta</div>
-                <div class="pm" id="qs-pm-transfer" onclick="qsSetPay('transfer')"><span class="pm-ico">🏦</span>Transf.</div>
-              </div>
-              <div id="qs-cash-row">
-                <input type="number" id="qs-cash-recv" placeholder="Monto recibido..."
-                  style="width:100%;font-size:16px;font-weight:700;margin-bottom:6px" oninput="qsCalcChange()">
-                <div id="qs-vuelto" class="vuelto"></div>
-              </div>
-              <button class="cobrar-btn" id="qs-cobrar-btn" onclick="qsFinalizarVenta()" disabled>⚡ Cobrar (F2)</button>
-              <button class="btn" style="width:100%;margin-top:8px" onclick="closeQuickSale()">Volver a ventas</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- HISTORIAL -->
+            <!-- HISTORIAL -->
       <div class="page" id="page-historial">
         <div class="cards">
           <div class="card"><div class="card-lbl">Ventas</div><div class="card-val" id="h-count">0</div></div>
@@ -805,11 +771,10 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="config.js?v=5"></script>
 <script src="firebase.js?v=7"></script>
-<script src="app.js?v=7"></script>
-<script src="caja.js?v=9"></script>
+<script src="app.js?v=8"></script>
+<script src="caja.js?v=10"></script>
 <script src="stock.js?v=6"></script>
 <script src="dashboard.js?v=5"></script>
-<script src="quicksale.js?v=5"></script>
 <script src="importar.js?v=5"></script>
 <script src="gastos.js?v=2"></script>
 
