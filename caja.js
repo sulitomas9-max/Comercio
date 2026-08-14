@@ -385,10 +385,15 @@ async function saveQuickAddProduct() {
   document.getElementById('barcode-in').focus();
 }
 
+// Búsqueda de productos en Ventas: soporta mouse y teclado (↑↓ + Enter),
+// para poder vender sin tocar el mouse igual que escaneando un código.
+let vsearch = { idx: -1, items: [] };
+
 function filterProds() {
   const q   = document.getElementById('search-prod').value.toLowerCase().trim();
   const res = document.getElementById('search-results');
-  if (!q) { res.style.display = 'none'; return; }
+  vsearch.idx = -1;
+  if (!q) { res.style.display = 'none'; vsearch.items = []; return; }
 
   const found = store.products.filter(p =>
     p.name.toLowerCase().includes(q) || p.code.includes(q)
@@ -397,20 +402,25 @@ function filterProds() {
     c.name.toLowerCase().includes(q)
   );
 
-  if (!found.length && !foundCombos.length) { res.style.display = 'none'; return; }
+  if (!found.length && !foundCombos.length) { res.style.display = 'none'; vsearch.items = []; return; }
+
+  vsearch.items = [
+    ...found.map(p => ({ type: 'prod', id: p.id })),
+    ...foundCombos.map(c => ({ type: 'combo', id: c.id })),
+  ];
 
   res.style.display = 'block';
   res.innerHTML =
-    found.map(p => `
-      <div class="sr-item" onclick="addToCartById(${p.id})">
+    found.map((p, i) => `
+      <div class="sr-item" id="sr-${i}" onclick="addToCartById(${p.id})">
         <div>
           <div class="sr-name">${p.name}${p.presentaciones?.length ? ' <span style="font-size:10px;color:var(--blue);font-weight:600">• presentaciones</span>' : ''}</div>
           <div class="sr-meta">Stock: ${p.stock} · ${p.code || 'Sin código'}</div>
         </div>
         <div class="sr-price">${formatMoney(p.price)}</div>
       </div>`).join('') +
-    foundCombos.map(c => `
-      <div class="sr-item" onclick="addComboToCart(store.combos.find(x=>x.id===${c.id})); document.getElementById('search-prod').value=''; document.getElementById('search-results').style.display='none'">
+    foundCombos.map((c, j) => `
+      <div class="sr-item" id="sr-${found.length + j}" onclick="addComboToCart(store.combos.find(x=>x.id===${c.id})); document.getElementById('search-prod').value=''; document.getElementById('search-results').style.display='none'">
         <div>
           <div class="sr-name">🎁 ${c.name}</div>
           <div class="sr-meta">Combo · ${c.items.length} productos</div>
@@ -419,11 +429,69 @@ function filterProds() {
       </div>`).join('');
 }
 
+function searchKeydown(e) {
+  const items = vsearch.items;
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault();
+      if (!items.length) return;
+      vsearch.idx = Math.min(vsearch.idx + 1, items.length - 1);
+      updateSearchSelection();
+      break;
+
+    case 'ArrowUp':
+      e.preventDefault();
+      if (!items.length) return;
+      vsearch.idx = Math.max(vsearch.idx - 1, -1);
+      updateSearchSelection();
+      break;
+
+    case 'Enter':
+      e.preventDefault();
+      if (vsearch.idx >= 0 && items[vsearch.idx]) {
+        activateSearchItem(items[vsearch.idx]);
+      } else if (items.length === 1) {
+        activateSearchItem(items[0]);
+      }
+      break;
+
+    case 'Escape':
+      document.getElementById('search-prod').value = '';
+      document.getElementById('search-results').style.display = 'none';
+      vsearch.idx = -1;
+      vsearch.items = [];
+      break;
+  }
+}
+
+function updateSearchSelection() {
+  document.querySelectorAll('#search-results .sr-item').forEach((el, i) => {
+    el.classList.toggle('sel', i === vsearch.idx);
+  });
+  const sel = document.getElementById('sr-' + vsearch.idx);
+  if (sel) sel.scrollIntoView({ block: 'nearest' });
+}
+
+function activateSearchItem(item) {
+  if (item.type === 'prod') {
+    addToCartById(item.id);
+  } else {
+    const combo = store.combos.find(x => x.id === item.id);
+    if (combo) addComboToCart(combo);
+    document.getElementById('search-prod').value = '';
+    document.getElementById('search-results').style.display = 'none';
+  }
+  vsearch.idx = -1;
+  vsearch.items = [];
+}
+
 function addToCartById(id) {
   const prod = store.products.find(p => p.id === id);
   if (!prod) return;
   document.getElementById('search-prod').value = '';
   document.getElementById('search-results').style.display = 'none';
+  vsearch.idx = -1;
+  vsearch.items = [];
   if (prod.presentaciones && prod.presentaciones.length > 0) {
     openPresentacionModal(prod);
   } else {
