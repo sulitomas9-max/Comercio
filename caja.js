@@ -313,15 +313,37 @@ function scanBarcode() {
 }
 
 // ===== ALTA RÁPIDA DE PRODUCTO DESDE LA CAJA =====
-// Se usa cuando se escanea un código que no está en la base de datos:
-// la cajera carga solo nombre + precio y el producto queda disponible
-// al instante (para esa venta y para futuras). Queda marcado con
-// pendienteRevision=true para que un admin lo complete después
-// (categoría, proveedor, costo, stock real, etc.) desde Stock.
+// Se usa cuando se escanea un código que no está en la base de datos, o
+// cuando la cajera toca "Producto sin código" para un producto que
+// directamente no tiene código de barras (fruta, verdura, algo suelto, etc.).
+// En ambos casos se carga solo nombre + precio (código opcional) y el
+// producto queda disponible al instante (para esa venta y para futuras).
+// Queda marcado con pendienteRevision=true para que un admin lo complete
+// después (categoría, proveedor, costo, stock real, etc.) desde Stock.
 function openQuickAddModal(code) {
   if (!store.cajaAbierta) { toast('Abrí la caja primero', 'err'); return; }
-  store.qaCode = code;
-  document.getElementById('qa-code').value  = code;
+  document.getElementById('quickadd-title').textContent = '🆕 Producto no encontrado';
+  document.getElementById('quickadd-desc').textContent  = 'Este código no está cargado. Escribí el nombre y el precio para venderlo ahora — después un admin puede completar el resto en Stock.';
+  const codeInput = document.getElementById('qa-code');
+  codeInput.value    = code;
+  codeInput.disabled = true;
+  document.getElementById('qa-name').value  = '';
+  document.getElementById('qa-price').value = '';
+  document.getElementById('msg-quickadd').textContent = '';
+  openModal('modal-quickadd');
+  setTimeout(() => document.getElementById('qa-name').focus(), 50);
+}
+
+// Alta manual desde la caja, para productos que no tienen código de barras
+// (o que la cajera no quiere escanear en ese momento). El código queda
+// opcional y editable.
+function openManualAddModal() {
+  if (!store.cajaAbierta) { toast('Abrí la caja primero', 'err'); return; }
+  document.getElementById('quickadd-title').textContent = '🆕 Agregar producto';
+  document.getElementById('quickadd-desc').textContent  = 'Para productos sin código de barras. Completá nombre y precio; el código es opcional y podés completar el resto después en Stock.';
+  const codeInput = document.getElementById('qa-code');
+  codeInput.value    = '';
+  codeInput.disabled = false;
   document.getElementById('qa-name').value  = '';
   document.getElementById('qa-price').value = '';
   document.getElementById('msg-quickadd').textContent = '';
@@ -330,13 +352,13 @@ function openQuickAddModal(code) {
 }
 
 async function saveQuickAddProduct() {
-  const code  = store.qaCode;
+  const code  = document.getElementById('qa-code').value.trim();
   const name  = document.getElementById('qa-name').value.trim();
   const price = parseFloat(document.getElementById('qa-price').value);
 
   if (!name)               { showMsg('msg-quickadd', 'Escribí una descripción', 'err'); return; }
   if (!price || price <= 0) { showMsg('msg-quickadd', 'Ingresá un precio válido', 'err'); return; }
-  if (store.products.find(p => p.code === code)) { showMsg('msg-quickadd', 'Ese código ya fue cargado, escaneá de nuevo', 'err'); return; }
+  if (code && store.products.find(p => p.code === code)) { showMsg('msg-quickadd', 'Ese código ya fue cargado, escaneá de nuevo', 'err'); return; }
 
   const newProd = {
     id: store.nextProdId++,
@@ -381,7 +403,7 @@ function filterProds() {
       <div class="sr-item" onclick="addToCartById(${p.id})">
         <div>
           <div class="sr-name">${p.name}${p.presentaciones?.length ? ' <span style="font-size:10px;color:var(--blue);font-weight:600">• presentaciones</span>' : ''}</div>
-          <div class="sr-meta">Stock: ${p.stock} · ${p.code}</div>
+          <div class="sr-meta">Stock: ${p.stock} · ${p.code || 'Sin código'}</div>
         </div>
         <div class="sr-price">${formatMoney(p.price)}</div>
       </div>`).join('') +
