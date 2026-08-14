@@ -194,6 +194,46 @@ function closeSidebar() {
 function formatMoney(amount) {
   return '$' + amount.toLocaleString();
 }
+// ===== AUTOCOMPLETADO DE NOMBRE DE PRODUCTO =====
+// Se usa al cargar un producto nuevo (desde la caja o desde Stock) para
+// avisar si ya existe uno con nombre parecido y evitar duplicados.
+
+function suggestProductNames(inputId, sugId) {
+  const input = document.getElementById(inputId);
+  const box   = document.getElementById(sugId);
+  if (!input || !box) return;
+  const q = input.value.trim().toLowerCase();
+  const excludeId = inputId === 'f-name' ? store.editProdId : null;
+
+  if (q.length < 2) { box.innerHTML = ''; box.style.display = 'none'; return; }
+
+  const matches = store.products
+    .filter(p => p.id !== excludeId && p.name.toLowerCase().includes(q))
+    .slice(0, 5);
+
+  if (!matches.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
+
+  box.style.display = 'block';
+  box.innerHTML = matches.map(p => `
+    <div class="name-sug-item" onmousedown="pickProductName('${inputId}','${sugId}',${p.id})">
+      <span>${p.name}</span>
+      <span class="name-sug-meta">${formatMoney(p.price)} · stock ${p.stock}</span>
+    </div>`).join('') +
+    `<div class="name-sug-hint">Ya existe algo parecido — elegilo si es el mismo producto</div>`;
+}
+
+function pickProductName(inputId, sugId, prodId) {
+  const prod = store.products.find(p => p.id === prodId);
+  if (!prod) return;
+  document.getElementById(inputId).value = prod.name;
+  hideNameSuggestions(sugId);
+  toast(`Ya existe "${prod.name}" — revisalo en vez de crear uno nuevo`, 'err');
+}
+
+function hideNameSuggestions(sugId) {
+  const box = document.getElementById(sugId);
+  if (box) { box.innerHTML = ''; box.style.display = 'none'; }
+}
 
 // ===== WIZARD DE PRIMER ARRANQUE =====
 // Se muestra cuando no hay usuarios en Firebase (instalación nueva).
