@@ -58,18 +58,22 @@ function updateCajaBar() {
     document.getElementById('caja-bar-sub').textContent =
       `Cajero: ${store.cajaAbierta.cajeroNombre || '—'} · Desde ${store.cajaAbierta.inicio || '—'}`;
 
-    const ventasEf = calcVentasEfCaja();
-    const retiros  = calcRetirosCaja();
-    const saldo    = store.cajaAbierta.inicial + ventasEf - retiros;
+    const ventasEf       = calcVentasEfCaja();
+    const ventasTransfer = calcVentasMetodoCaja('transfer');
+    const ventasTarjeta  = calcVentasMetodoCaja('card');
+    const retiros        = calcRetirosCaja();
+    const saldo          = store.cajaAbierta.inicial + ventasEf - retiros;
 
     document.getElementById('caja-actions').innerHTML = `
       <button class="btn warn-btn sm" onclick="openRetiro()">Retiro</button>
       <button class="btn red sm" onclick="openCerrarCaja()">Cerrar caja</button>`;
 
     strip.style.display = 'flex';
-    document.getElementById('csi-inicial').textContent = formatMoney(store.cajaAbierta.inicial);
-    document.getElementById('csi-ventas').textContent  = formatMoney(ventasEf);
-    document.getElementById('csi-retiros').textContent = formatMoney(retiros);
+    document.getElementById('csi-inicial').textContent  = formatMoney(store.cajaAbierta.inicial);
+    document.getElementById('csi-ventas').textContent   = formatMoney(ventasEf);
+    document.getElementById('csi-transfer').textContent = formatMoney(ventasTransfer);
+    document.getElementById('csi-tarjeta').textContent  = formatMoney(ventasTarjeta);
+    document.getElementById('csi-retiros').textContent  = formatMoney(retiros);
     document.getElementById('csi-saldo').textContent   = formatMoney(saldo);
     document.getElementById('csi-saldo').className = 'csi-val ' + (saldo > 0 ? 'pos' : saldo < 0 ? 'neg' : '');
 
