@@ -104,6 +104,73 @@ function calcMetrics() {
   return { ventasHoy, totalHoy, totalSemana, totalMes, totalPrev, ticketProm, topProds, byMethod, cambioPct };
 }
 
+// ===== VENTA DEL DÍA EN VIVO (multi-dispositivo) =====
+// Consulta directamente Firebase (no store.sales, que solo se carga una vez
+// al iniciar sesión) para reflejar ventas hechas desde OTROS dispositivos
+// mientras el panel de administración está abierto. Se refresca solo, cada
+// LIVE_HOY_INTERVAL_MS, mientras estemos parados en la página de dashboard.
+
+const LIVE_HOY_INTERVAL_MS = 20000;
+let _liveHoyInterval = null;
+
+function _fechaHoyStr() {
+  const now = new Date();
+  return `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
+}
+
+async function _fetchVentasHoyLive() {
+  const el = document.getElementById('live-hoy-total');
+  if (!el) return; // el panel no está en pantalla (navegamos a otra página)
+  if (!db) return; // sin Firebase disponible (offline): no hay forma de ver otros dispositivos
+
+  try {
+    const hoy  = _fechaHoyStr();
+    const snap = await db.collection('sales').where('date', '==', hoy).get();
+    let total = 0, count = 0, cash = 0, transfer = 0, card = 0;
+    snap.forEach(d => {
+      const v = d.data();
+      if (v.anulada) return;
+      const t = v.total || 0;
+      total += t;
+      count++;
+      if      (v.method === 'cash')     cash     += t;
+      else if (v.method === 'transfer') transfer += t;
+      else if (v.method === 'card')     card     += t;
+    });
+    _renderVentasHoyLive({ total, count, cash, transfer, card });
+  } catch(e) {
+    console.warn('No se pudo actualizar la venta en vivo:', e);
+  }
+}
+
+function _renderVentasHoyLive(m) {
+  const elTotal = document.getElementById('live-hoy-total');
+  if (!elTotal) return;
+  elTotal.textContent = formatMoney(m.total);
+  document.getElementById('live-hoy-count').textContent    = m.count;
+  document.getElementById('live-hoy-cash').textContent     = formatMoney(m.cash);
+  document.getElementById('live-hoy-transfer').textContent = formatMoney(m.transfer);
+  document.getElementById('live-hoy-card').textContent     = formatMoney(m.card);
+  const upd = document.getElementById('live-hoy-updated');
+  if (upd) {
+    upd.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-AR', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+  }
+}
+
+function startLiveVentasHoy() {
+  stopLiveVentasHoy();
+  _fetchVentasHoyLive();
+  _liveHoyInterval = setInterval(_fetchVentasHoyLive, LIVE_HOY_INTERVAL_MS);
+}
+
+function stopLiveVentasHoy() {
+  if (_liveHoyInterval) {
+    clearInterval(_liveHoyInterval);
+    _liveHoyInterval = null;
+  }
+}
 
 // ===== VENTAS POR MES =====
 
