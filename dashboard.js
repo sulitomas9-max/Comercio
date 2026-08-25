@@ -683,6 +683,8 @@ function _aplicarFiltroHistorial() {
   if (!ventas.length) {
     if (tbody) tbody.innerHTML = '';
     if (empty) empty.style.display = 'block';
+    _renderHistorialDevoluciones();
+    _renderHistorialCajas();
     return;
   }
   if (empty) empty.style.display = 'none';
@@ -728,9 +730,9 @@ function _aplicarFiltroHistorial() {
       </tr>`).join('');
   }
 
-  // Devoluciones
-  _renderDevHistory();
-  _renderCajaHistory();
+  // Devoluciones e historial de cajas (implementación completa en caja.js)
+  _renderHistorialDevoluciones();
+  _renderHistorialCajas();
 }
 
 function _renderDevHistory() {
