@@ -17,6 +17,26 @@ function calcVentasEfCaja() {
     .reduce((s, v) => s + v.total, 0);
 }
 
+// Suma de ventas de la caja actualmente abierta para un método dado
+// ('transfer', 'card'). Solo el efectivo afecta el saldo físico de la caja,
+// por eso estos montos son informativos y no entran en calcSaldoCaja().
+function calcVentasMetodoCaja(method) {
+  if (!store.cajaAbierta) return 0;
+  return store.sales
+    .filter(s => s.cajaId === store.cajaAbierta.id && s.method === method)
+    .reduce((s, v) => s + v.total, 0);
+}
+
+// Suma de ventas por método para CUALQUIER caja (abierta o del historial),
+// a partir de store.sales — sirve tanto para la caja abierta como para
+// cajas ya cerradas, sin depender de qué campos se hayan guardado en el
+// documento de la caja.
+function calcVentasMetodoPorCajaId(cajaId, method) {
+  return store.sales
+    .filter(s => s.cajaId === cajaId && s.method === method)
+    .reduce((s, v) => s + v.total, 0);
+}
+
 function calcRetirosCaja() {
   if (!store.cajaAbierta) return 0;
   return store.retiros
@@ -118,15 +138,19 @@ async function abrirCaja() {
 
 function openCerrarCaja() {
   if (!store.cajaAbierta) return;
-  const ventasEf      = calcVentasEfCaja();
-  const totalRetiros  = calcRetirosCaja();
-  const saldoEsperado = store.cajaAbierta.inicial + ventasEf - totalRetiros;
+  const ventasEf       = calcVentasEfCaja();
+  const ventasTransfer = calcVentasMetodoCaja('transfer');
+  const ventasTarjeta  = calcVentasMetodoCaja('card');
+  const totalRetiros   = calcRetirosCaja();
+  const saldoEsperado  = store.cajaAbierta.inicial + ventasEf - totalRetiros;
 
   document.getElementById('caj-resumen-cierre').innerHTML = `
     <div class="total-line"><span style="color:var(--txt2)">Monto inicial</span><span style="font-weight:600">${formatMoney(store.cajaAbierta.inicial)}</span></div>
     <div class="total-line"><span style="color:var(--txt2)">Ventas en efectivo</span><span style="font-weight:600;color:var(--accent)">+${formatMoney(ventasEf)}</span></div>
+    <div class="total-line"><span style="color:var(--txt2)">Ventas en transferencia</span><span style="font-weight:600;color:var(--blue)">${formatMoney(ventasTransfer)}</span></div>
+    <div class="total-line"><span style="color:var(--txt2)">Ventas con tarjeta</span><span style="font-weight:600;color:var(--blue)">${formatMoney(ventasTarjeta)}</span></div>
     <div class="total-line"><span style="color:var(--txt2)">Retiros realizados</span><span style="font-weight:600;color:var(--red)">-${formatMoney(totalRetiros)}</span></div>
-    <div class="total-line" style="border-top:1px solid var(--brd);padding-top:6px;font-weight:700"><span>Esperado en caja</span><span>${formatMoney(saldoEsperado)}</span></div>`;
+    <div class="total-line" style="border-top:1px solid var(--brd);padding-top:6px;font-weight:700"><span>Esperado en caja (efectivo)</span><span>${formatMoney(saldoEsperado)}</span></div>`;
 
   document.getElementById('caj-contado').value = '';
   document.getElementById('dif-display').style.display = 'none';
@@ -151,15 +175,19 @@ function calcDiferenciaCierre() {
 
 async function cerrarCaja() {
   if (!store.cajaAbierta) return;
-  const ventasEf     = calcVentasEfCaja();
-  const totalRetiros = calcRetirosCaja();
-  const esperado     = store.cajaAbierta.inicial + ventasEf - totalRetiros;
-  const contado      = parseFloat(document.getElementById('caj-contado').value) || 0;
+  const ventasEf       = calcVentasEfCaja();
+  const ventasTransfer = calcVentasMetodoCaja('transfer');
+  const ventasTarjeta  = calcVentasMetodoCaja('card');
+  const totalRetiros   = calcRetirosCaja();
+  const esperado       = store.cajaAbierta.inicial + ventasEf - totalRetiros;
+  const contado        = parseFloat(document.getElementById('caj-contado').value) || 0;
 
   // Armar objeto completo ANTES de modificar el estado
   const cajaCerrada = {
     ...store.cajaAbierta,
     ventasEf,
+    ventasTransfer,
+    ventasTarjeta,
     totalRetiros,
     esperado,
     contado,
@@ -185,7 +213,6 @@ async function cerrarCaja() {
   updateCajaBar();
   toast('Caja cerrada.');
 }
-
 // ===== RETIRO =====
 
 function openRetiro() {
@@ -997,6 +1024,12 @@ function _renderHistorialCajas() {
       esp = c.inicial + vef - ret;
     }
 
+    // Transferencia y tarjeta no afectan el efectivo de la caja, así que se
+    // calculan siempre en base a las ventas registradas (sirve tanto para
+    // cajas abiertas como para las ya cerradas en el historial).
+    const vtransfer = calcVentasMetodoPorCajaId(c.id, 'transfer');
+    const vtarjeta  = calcVentasMetodoPorCajaId(c.id, 'card');
+
     const dif      = !c.abierta ? c.diferencia : null;
     const apertura = c.inicio   || '—';
     const cajero   = c.cajeroNombre || '—';
@@ -1006,6 +1039,8 @@ function _renderHistorialCajas() {
       <td>${cajero}</td>
       <td>${formatMoney(c.inicial)}</td>
       <td style="color:var(--accent);font-weight:600">${formatMoney(vef)}</td>
+      <td style="color:var(--blue);font-weight:600">${formatMoney(vtransfer)}</td>
+      <td style="color:var(--blue);font-weight:600">${formatMoney(vtarjeta)}</td>
       <td style="color:var(--red);font-weight:600">${formatMoney(ret)}</td>
       <td style="font-weight:600">${formatMoney(esp)}</td>
       <td>${c.contado != null ? formatMoney(c.contado) : '—'}</td>
