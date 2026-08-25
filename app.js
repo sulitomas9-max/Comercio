@@ -417,6 +417,7 @@ function _handleFailedLogin(errEl) {
 }
 
 function doLogout() {
+  if (typeof stopLiveVentasHoy === 'function') stopLiveVentasHoy();
   store.currentUser = null;
   store.cart = [];
   document.getElementById('login').style.display = 'flex';
@@ -467,10 +468,14 @@ function go(page) {
   document.getElementById('topbar-title').textContent = PAGE_TITLES[page] || page;
   closeSidebar();
 
+  // El panel de "venta del día en vivo" solo debe consultar Firebase
+  // mientras estemos parados en el dashboard; al salir, lo apagamos.
+  if (page !== 'dashboard' && typeof stopLiveVentasHoy === 'function') stopLiveVentasHoy();
+
   const renders = {
     ventas:      () => updateCajaBar(),
     historial:   () => renderHistory(),
-    dashboard:   () => { renderDashboard(); renderAlerts(); },
+    dashboard:   () => { renderDashboard(); renderAlerts(); startLiveVentasHoy(); },
     stock:       () => renderStockPage(),
     movimientos: () => renderMovimientos(),
     productos:   () => renderProducts(),
