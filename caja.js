@@ -213,6 +213,7 @@ async function cerrarCaja() {
   updateCajaBar();
   toast('Caja cerrada.');
 }
+
 // ===== RETIRO =====
 
 function openRetiro() {
