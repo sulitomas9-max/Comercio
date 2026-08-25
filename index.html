@@ -81,6 +81,8 @@
           <div class="caja-saldo-strip" id="caja-saldo-strip" style="display:none">
             <div class="caja-saldo-item"><div class="csi-label">Inicial</div><div class="csi-val pos" id="csi-inicial">$0</div></div>
             <div class="caja-saldo-item"><div class="csi-label">Ventas efectivo</div><div class="csi-val pos" id="csi-ventas">$0</div></div>
+            <div class="caja-saldo-item"><div class="csi-label">Transferencia</div><div class="csi-val" id="csi-transfer" style="color:var(--blue)">$0</div></div>
+            <div class="caja-saldo-item"><div class="csi-label">Tarjeta</div><div class="csi-val" id="csi-tarjeta" style="color:var(--blue)">$0</div></div>
             <div class="caja-saldo-item"><div class="csi-label">Retiros</div><div class="csi-val neg" id="csi-retiros">$0</div></div>
             <div class="caja-saldo-item"><div class="csi-label">En caja ahora</div><div class="csi-val pos" id="csi-saldo">$0</div></div>
           </div>
@@ -173,6 +175,22 @@
 
       <!-- DASHBOARD -->
       <div class="page" id="page-dashboard">
+        <div class="sec" id="dash-live-panel" style="border-left:3px solid var(--accent)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:6px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="dot-pulse dp-on"></span>
+              <span class="sec-title" style="margin-bottom:0">Venta de hoy en vivo</span>
+            </div>
+            <span id="live-hoy-updated" style="font-size:11px;color:var(--txt3)"></span>
+          </div>
+          <div class="cards" style="margin-bottom:0">
+            <div class="card"><div class="card-lbl">Total hoy</div><div class="card-val g" id="live-hoy-total">$0</div></div>
+            <div class="card"><div class="card-lbl">Ventas</div><div class="card-val" id="live-hoy-count">0</div></div>
+            <div class="card"><div class="card-lbl">Efectivo</div><div class="card-val g" id="live-hoy-cash">$0</div></div>
+            <div class="card"><div class="card-lbl">Transferencia</div><div class="card-val b" id="live-hoy-transfer">$0</div></div>
+            <div class="card"><div class="card-lbl">Tarjeta</div><div class="card-val b" id="live-hoy-card">$0</div></div>
+          </div>
+        </div>
         <div class="cards">
           <div class="card"><div class="card-lbl">Ventas hoy</div><div class="card-val" id="dash-hoy-count">0</div></div>
           <div class="card"><div class="card-lbl">Total hoy</div><div class="card-val g" id="dash-hoy-total">$0</div></div>
