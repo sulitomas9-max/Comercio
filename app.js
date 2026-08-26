@@ -825,10 +825,9 @@ async function changeAdminPass() {
 
 // ===== INIT =====
 (function init() {
-  loadDrafts();
-
   // Cargamos usuarios desde Firebase antes de mostrar el login
   waitForFirebase(async () => {
+    loadDrafts();
     await loadUsersFromFirebase();
     if (store.users.length === 0) {
       showSetupWizard();
