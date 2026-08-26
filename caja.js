@@ -13,28 +13,30 @@ function calcSaldoCaja() {
 function calcVentasEfCaja() {
   if (!store.cajaAbierta) return 0;
   return store.sales
-    .filter(s => s.cajaId === store.cajaAbierta.id && s.method === 'cash')
-    .reduce((s, v) => s + v.total, 0);
+    .filter(s => s.cajaId === store.cajaAbierta.id)
+    .reduce((s, v) => s + montoPorMetodo(v, 'cash'), 0);
 }
 
 // Suma de ventas de la caja actualmente abierta para un método dado
 // ('transfer', 'card'). Solo el efectivo afecta el saldo físico de la caja,
 // por eso estos montos son informativos y no entran en calcSaldoCaja().
+// Contempla también la parte correspondiente de las ventas con pago dividido.
 function calcVentasMetodoCaja(method) {
   if (!store.cajaAbierta) return 0;
   return store.sales
-    .filter(s => s.cajaId === store.cajaAbierta.id && s.method === method)
-    .reduce((s, v) => s + v.total, 0);
+    .filter(s => s.cajaId === store.cajaAbierta.id)
+    .reduce((s, v) => s + montoPorMetodo(v, method), 0);
 }
 
 // Suma de ventas por método para CUALQUIER caja (abierta o del historial),
 // a partir de store.sales — sirve tanto para la caja abierta como para
 // cajas ya cerradas, sin depender de qué campos se hayan guardado en el
-// documento de la caja.
+// documento de la caja. Contempla también la parte correspondiente de las
+// ventas con pago dividido.
 function calcVentasMetodoPorCajaId(cajaId, method) {
   return store.sales
-    .filter(s => s.cajaId === cajaId && s.method === method)
-    .reduce((s, v) => s + v.total, 0);
+    .filter(s => s.cajaId === cajaId)
+    .reduce((s, v) => s + montoPorMetodo(v, method), 0);
 }
 
 function calcRetirosCaja() {
@@ -697,7 +699,7 @@ function updateTotal() {
   const cobrarBtn = document.getElementById('cobrar-btn');
   if (cobrarBtn) cobrarBtn.disabled = !store.cajaAbierta || !store.cart.length;
 
-  calcChange();
+  if (store.splitPayment) calcSplitDiff(); else calcChange();
 }
 
 function calcChange() {
@@ -717,6 +719,45 @@ function calcChange() {
   } else {
     el.style.display = 'none';
   }
+}
+
+// ===== PAGO DIVIDIDO =====
+// Permite cobrar una venta repartiendo el total entre efectivo, tarjeta y
+// transferencia en las proporciones que decida el cajero.
+
+function toggleSplitPayment(active) {
+  store.splitPayment = active;
+  const singleWrap = document.getElementById('single-pay-wrap');
+  const splitWrap   = document.getElementById('split-pay-wrap');
+  if (singleWrap) singleWrap.style.display = active ? 'none' : 'block';
+  if (splitWrap)  splitWrap.style.display  = active ? 'block' : 'none';
+  if (active) calcSplitDiff(); else calcChange();
+}
+
+function calcSplitDiff() {
+  const subtotal = store.cart.reduce((s, c) => s + c.price * c.qty, 0);
+  const descPct  = parseFloat(document.getElementById('desc-pct')?.value) || 0;
+  const total    = Math.round(subtotal * (1 - descPct / 100));
+
+  const cash     = parseFloat(document.getElementById('split-cash')?.value)     || 0;
+  const card     = parseFloat(document.getElementById('split-card')?.value)     || 0;
+  const transfer = parseFloat(document.getElementById('split-transfer')?.value) || 0;
+  const suma     = Math.round(cash + card + transfer);
+  const diff     = total - suma;
+
+  const el = document.getElementById('split-diff');
+  if (!el) return;
+  if (suma <= 0) {
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = 'block';
+  el.className     = 'vuelto ' + (diff === 0 ? 'ok' : 'err');
+  el.textContent   = diff === 0
+    ? '✓ Coincide con el total'
+    : diff > 0
+      ? 'Falta: ' + formatMoney(diff)
+      : 'Sobra: ' + formatMoney(Math.abs(diff));
 }
 
 function setPay(method) {
@@ -753,7 +794,20 @@ async function processSale() {
   const descMonto = Math.round(subtotal * descPct / 100);
   const total     = subtotal - descMonto;
 
-  if (store.payMethod === 'cash') {
+  let paymentSplit = null;
+
+  if (store.splitPayment) {
+    const cash     = parseFloat(document.getElementById('split-cash')?.value)     || 0;
+    const card     = parseFloat(document.getElementById('split-card')?.value)     || 0;
+    const transfer = parseFloat(document.getElementById('split-transfer')?.value) || 0;
+    const suma     = Math.round(cash + card + transfer);
+    if (suma <= 0) { toast('Ingresá los montos del pago dividido', 'err'); return; }
+    if (suma !== total) {
+      toast(suma < total ? 'Falta cubrir el total entre los métodos' : 'El pago dividido supera el total de la venta', 'err');
+      return;
+    }
+    paymentSplit = { cash, card, transfer };
+  } else if (store.payMethod === 'cash') {
     const received = parseFloat(document.getElementById('cash-recv').value) || 0;
     if (received < total) { toast('Monto insuficiente', 'err'); return; }
   }
@@ -794,9 +848,10 @@ async function processSale() {
     date: `${now.getDate()}/${now.getMonth()+1}/${now.getFullYear()}`,
     time: now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
     items: [...store.cart], subtotal, descuento: descMonto, descPct, total,
-    method: store.payMethod,
+    method: paymentSplit ? 'mixed' : store.payMethod,
     userId: store.currentUser.id, userName: store.currentUser.name,
   };
+  if (paymentSplit) sale.paymentSplit = paymentSplit;
   store.sales.push(sale);
   await saveSale(sale, updatedProducts, newMovimientos);
 
@@ -806,6 +861,12 @@ async function processSale() {
   if (descEl) descEl.value = '';
   document.getElementById('cash-recv').value = '';
   document.getElementById('vuelto').style.display = 'none';
+  ['split-cash', 'split-card', 'split-transfer'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const splitDiffEl = document.getElementById('split-diff');
+  if (splitDiffEl) splitDiffEl.style.display = 'none';
   renderCart();
   updateCajaBar();
 }
@@ -831,6 +892,18 @@ function generateTicket(sale) {
       <span>- ${formatMoney(sale.descuento)}</span>
     </div>` : '';
 
+  const metodoHTML = (sale.method === 'mixed' && sale.paymentSplit)
+    ? Object.entries(sale.paymentSplit)
+        .filter(([, monto]) => monto > 0)
+        .map(([m, monto]) => `
+        <div class="tk-total-row" style="color:var(--txt2);font-size:12px">
+          <span>${methodName[m]}</span><span>${formatMoney(monto)}</span>
+        </div>`).join('')
+    : `
+        <div class="tk-total-row" style="color:var(--txt2);font-size:12px">
+          <span>Método</span><span>${methodName[sale.method] || sale.method}</span>
+        </div>`;
+
   document.getElementById('ticket-content').innerHTML = `
     <div class="tk-wrap">
       <div class="tk-header">
@@ -852,9 +925,7 @@ function generateTicket(sale) {
         <div class="tk-total-row"><span>Subtotal</span><span>${formatMoney(sale.subtotal || sale.total)}</span></div>
         ${descHTML}
         <div class="tk-total-row tk-total-final"><span>TOTAL</span><span>${formatMoney(sale.total)}</span></div>
-        <div class="tk-total-row" style="color:var(--txt2);font-size:12px">
-          <span>Método</span><span>${methodName[sale.method] || sale.method}</span>
-        </div>
+        ${metodoHTML}
       </div>
       ${sale.anulada ? '<div class="tk-anulada">⚠ VENTA ANULADA</div>' : ''}
       <div class="tk-footer"><div>¡Gracias por su compra!</div></div>
@@ -1029,7 +1100,7 @@ function _renderHistorialCajas() {
     } else {
       // Caja abierta: recalcular en tiempo real
       ret = store.retiros.filter(r => r.cajaId === c.id).reduce((s, r) => s + r.monto, 0);
-      vef = store.sales.filter(s => s.cajaId === c.id && s.method === 'cash').reduce((s, v) => s + v.total, 0);
+      vef = calcVentasMetodoPorCajaId(c.id, 'cash');
       esp = c.inicial + vef - ret;
     }
 
