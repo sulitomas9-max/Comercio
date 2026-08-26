@@ -55,6 +55,8 @@ body {
   line-height: 1.5;
   overflow: hidden;
   height: 100vh;
+  height: 100dvh; /* iOS Safari: 100vh no descuenta la barra de direcciones */
+  overscroll-behavior: none;
 }
 
 code {
@@ -172,7 +174,7 @@ code {
 .login-hint strong { color: var(--txt); }
 
 /* ===== APP LAYOUT ===== */
-#app { display: none; height: 100vh; overflow: hidden; }
+#app { display: none; height: 100vh; height: 100dvh; overflow: hidden; }
 #app.on { display: flex; }
 
 .sidebar {
@@ -183,6 +185,7 @@ code {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
 }
 
@@ -873,6 +876,10 @@ tr:hover td { background: var(--bg3); }
     top: 0;
     z-index: 100;
     height: 100vh;
+    height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
     transition: left .22s;
     box-shadow: 4px 0 24px rgba(0,0,0,.18);
   }
@@ -905,16 +912,26 @@ tr:hover td { background: var(--bg3); }
   .vr-toggle-total { font-size: 17px; font-weight: 700; color: var(--accent); }
   .vr-toggle-icon { font-size: 20px; transition: transform .3s; color: var(--txt2); }
   .venta-right.expanded .vr-toggle-icon { transform: rotate(180deg); }
-  .vr-body { padding: 0 12px 12px; }
+  .vr-body { padding: 0 12px calc(12px + env(safe-area-inset-bottom)); }
   .venta-left { padding-bottom: 68px; }
   .cards { grid-template-columns: 1fr 1fr; }
   .topbar { padding: 10px 14px; }
-  .page-content { padding: 14px; }
-  .menu-toggle { display: block; }
+  .page-content { padding: 14px; overscroll-behavior-y: contain; }
+  .menu-toggle { display: block; padding: 8px 10px; font-size: 22px; }
+  .nav-btn { padding: 12px 16px; }
   .caja-saldo-strip { flex-wrap: wrap; }
   .caja-saldo-item { min-width: 50%; border-bottom: 1px solid var(--brd); }
   .pay-methods { grid-template-columns: 1fr 1fr 1fr; }
   .cobro-box { box-shadow: none; border: none; padding: 0 0 8px; }
+
+  /* iOS Safari: evita el zoom automático de la página al tocar un campo (necesita >=16px) */
+  input, select, textarea { font-size: 16px !important; }
+
+  /* Contiene tablas anchas dentro de su tarjeta en vez de scrollear toda la página */
+  .sec { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Botones +/- de cantidad en el carrito: objetivo táctil más grande */
+  .qbtn { width: 38px; height: 38px; font-size: 16px; }
 }
 
 @media (min-width: 769px) {
