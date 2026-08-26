@@ -109,7 +109,16 @@
               </div>
             </div>
 
+            <div class="sec" id="drafts-panel" style="display:none;flex-shrink:0">
+              <div class="sec-title" style="margin-bottom:8px">📋 Borradores guardados</div>
+              <div id="drafts-list"></div>
+            </div>
+
             <div class="cart-box" id="cart-box">
+              <div id="cart-toolbar" style="display:none;justify-content:flex-end;gap:8px;margin-bottom:10px">
+                <button class="btn sm" onclick="guardarBorrador()">💾 Guardar como borrador</button>
+                <button class="btn sm red" onclick="vaciarCarrito()">🗑️ Vaciar carrito</button>
+              </div>
               <div class="cart-empty" id="cart-empty">
                 <div style="font-size:36px;margin-bottom:10px">🛒</div>
                 <div style="font-size:14px">Escaneá o buscá un producto para agregar</div>
@@ -324,10 +333,14 @@
 
       <!-- PRODUCTOS -->
       <div class="page" id="page-productos">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:12px;gap:8px">
-          <button class="btn sm" onclick="exportCSV('stock')">⬇ Exportar CSV</button>
-          <button class="btn sm" id="btn-merge-prod" onclick="openMergeModal()" style="display:none">🔗 Fusionar duplicados</button>
-          <button class="btn pri" id="btn-nuevo-prod" onclick="openProdModal()" style="display:none">+ Nuevo producto</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <input id="prod-search" placeholder="🔍 Buscar por nombre, código o categoría..."
+            oninput="renderProducts(this.value)" style="width:260px" autocomplete="off">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn sm" onclick="exportCSV('stock')">⬇ Exportar CSV</button>
+            <button class="btn sm" id="btn-merge-prod" onclick="openMergeModal()" style="display:none">🔗 Fusionar duplicados</button>
+            <button class="btn pri" id="btn-nuevo-prod" onclick="openProdModal()" style="display:none">+ Nuevo producto</button>
+          </div>
         </div>
         <div class="sec">
           <table>
