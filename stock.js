@@ -6,8 +6,8 @@
 // ===== STOCK =====
 
 function renderStockPage() {
-  const lowStock = store.products.filter(p => p.stock > 0 && p.stock <= p.minStock);
-  const noStock  = store.products.filter(p => p.stock === 0);
+  const lowStock = store.products.filter(p => !esStockInfinito(p) && p.stock > 0 && p.stock <= p.minStock);
+  const noStock  = store.products.filter(p => !esStockInfinito(p) && p.stock === 0);
   const valTotal = store.products.reduce((s, p) => s + p.cost * p.stock, 0);
   document.getElementById('st-total').textContent = store.products.length;
   document.getElementById('st-low').textContent   = lowStock.length;
@@ -45,7 +45,7 @@ function renderStock(query = '') {
         <td style="font-size:12px;color:var(--txt2)">${proveedor ? proveedor.name : '-'}</td>
         <td style="font-weight:600">${formatMoney(p.price)}</td>
         ${isAdmin ? `<td style="color:var(--txt2)">${formatMoney(p.cost)}</td>` : ''}
-        <td style="font-weight:700;font-size:15px">${p.stock}</td>
+        <td style="font-weight:700;font-size:15px">${esStockInfinito(p) ? '∞' : p.stock}</td>
         <td><span class="badge ${state}">${badge}</span></td>
         <td><button class="btn sm" onclick="openStockModal(${p.id})">Ajustar</button></td>
       </tr>`;
@@ -53,6 +53,7 @@ function renderStock(query = '') {
 }
 
 function getStockBadge(product) {
+  if (esStockInfinito(product))        return { badge: 'Ilimitado', state: 'blu' };
   if (product.stock === 0)             return { badge: 'Sin stock', state: 'out' };
   if (product.stock <= product.minStock) return { badge: 'Stock bajo', state: 'low' };
   return { badge: 'Normal', state: 'ok' };
@@ -252,6 +253,8 @@ function openProdModal(id = null) {
   document.getElementById('f-price').value    = prod.price    || '';
   document.getElementById('f-stock').value    = prod.stock    || '';
   document.getElementById('f-minstock').value = prod.minStock || 5;
+  const infCheck = document.getElementById('f-stock-infinito');
+  if (infCheck) infCheck.checked = esStockInfinito(prod);
 
   // Ocultar costo y proveedor para cajeras
   const costRow = document.getElementById('f-cost-row');
@@ -312,6 +315,7 @@ async function saveProd() {
     price:         parseFloat(document.getElementById('f-price').value) || 0,
     stock:         parseInt(document.getElementById('f-stock').value) || 0,
     minStock:      parseInt(document.getElementById('f-minstock').value) || 5,
+    stockInfinito: document.getElementById('f-stock-infinito')?.checked !== false,
     presentaciones,
   };
 
