@@ -275,7 +275,7 @@ function openPresentacionModal(prod) {
   const el = document.getElementById('modal-presentacion');
   if (!el) return;
   document.getElementById('pres-prod-name').textContent = prod.name;
-  document.getElementById('pres-stock').textContent = `${prod.stock} unidades en stock`;
+  document.getElementById('pres-stock').textContent = esStockInfinito(prod) ? 'Stock ilimitado' : `${prod.stock} unidades en stock`;
 
   let html = `
     <div class="pres-option" onclick="addToCartConPresentacion(store.products.find(p=>p.id===${prod.id}),{id:'unit',label:'Unidad',price:${prod.price},unidades:1}); closeModal('modal-presentacion')">
@@ -447,7 +447,7 @@ function filterProds() {
       <div class="sr-item" id="sr-${i}" onclick="addToCartById(${p.id})">
         <div>
           <div class="sr-name">${p.name}${p.presentaciones?.length ? ' <span style="font-size:10px;color:var(--blue);font-weight:600">• presentaciones</span>' : ''}</div>
-          <div class="sr-meta">Stock: ${p.stock} · ${p.code || 'Sin código'}</div>
+          <div class="sr-meta">Stock: ${esStockInfinito(p) ? '∞' : p.stock} · ${p.code || 'Sin código'}</div>
         </div>
         <div class="sr-price">${formatMoney(p.price)}</div>
       </div>`).join('') +
@@ -533,10 +533,11 @@ function addToCartById(id) {
 
 function addToCart(prod) {
   if (!store.cajaAbierta) { toast('Abrí la caja primero', 'err'); return; }
-  if (prod.stock <= 0)     { toast('Sin stock disponible', 'err'); return; }
+  const infinito = esStockInfinito(prod);
+  if (!infinito && prod.stock <= 0) { toast('Sin stock disponible', 'err'); return; }
   const existing = store.cart.find(c => c.id === prod.id && !c.presentacionId && !c.isCombo);
   if (existing) {
-    if (existing.qty >= prod.stock) { toast('Stock insuficiente', 'err'); return; }
+    if (!infinito && existing.qty >= prod.stock) { toast('Stock insuficiente', 'err'); return; }
     existing.qty++;
   } else {
     store.cart.push({ id: prod.id, name: prod.name, price: prod.price, qty: 1, unidades: 1 });
@@ -547,12 +548,13 @@ function addToCart(prod) {
 
 function addToCartConPresentacion(prod, pres) {
   if (!store.cajaAbierta) { toast('Abrí la caja primero', 'err'); return; }
+  const infinito = esStockInfinito(prod);
   const unidades = pres.unidades || 1;
-  if (prod.stock < unidades) { toast('Stock insuficiente', 'err'); return; }
+  if (!infinito && prod.stock < unidades) { toast('Stock insuficiente', 'err'); return; }
   const cartKey = prod.id + '_' + pres.id;
   const existing = store.cart.find(c => c._cartKey === cartKey);
   if (existing) {
-    if ((existing.qty + 1) * unidades > prod.stock) { toast('Stock insuficiente', 'err'); return; }
+    if (!infinito && (existing.qty + 1) * unidades > prod.stock) { toast('Stock insuficiente', 'err'); return; }
     existing.qty++;
   } else {
     store.cart.push({
@@ -569,7 +571,7 @@ function addComboToCart(combo) {
   if (!store.cajaAbierta) { toast('Abrí la caja primero', 'err'); return; }
   for (const comp of combo.items) {
     const prod = store.products.find(p => p.id === comp.prodId);
-    if (!prod || prod.stock < comp.qty) {
+    if (!prod || (!esStockInfinito(prod) && prod.stock < comp.qty)) {
       toast('Stock insuficiente para el combo (' + (prod?.name || 'producto') + ')', 'err');
       return;
     }
@@ -578,7 +580,7 @@ function addComboToCart(combo) {
   if (existing) {
     for (const comp of combo.items) {
       const prod = store.products.find(p => p.id === comp.prodId);
-      if (prod.stock < comp.qty * (existing.qty + 1)) { toast('Stock insuficiente', 'err'); return; }
+      if (!esStockInfinito(prod) && prod.stock < comp.qty * (existing.qty + 1)) { toast('Stock insuficiente', 'err'); return; }
     }
     existing.qty++;
   } else {
@@ -604,12 +606,12 @@ function changeQty(cartKey, delta) {
   if (item.isCombo) {
     for (const comp of item.comboItems) {
       const prod = store.products.find(p => p.id === comp.prodId);
-      if (prod && prod.stock < comp.qty * newQty) { toast('Stock insuficiente', 'err'); return; }
+      if (prod && !esStockInfinito(prod) && prod.stock < comp.qty * newQty) { toast('Stock insuficiente', 'err'); return; }
     }
   } else {
     const prod = store.products.find(p => p.id === item.id);
     const unidades = item.unidades || 1;
-    if (prod && newQty * unidades > prod.stock) { toast('Stock insuficiente', 'err'); return; }
+    if (prod && !esStockInfinito(prod) && newQty * unidades > prod.stock) { toast('Stock insuficiente', 'err'); return; }
   }
   item.qty = newQty;
   renderCart();
@@ -622,7 +624,7 @@ function setQty(cartKey, val) {
   if (!item.isCombo) {
     const prod = store.products.find(p => p.id === item.id);
     const unidades = item.unidades || 1;
-    if (prod && newQty * unidades > prod.stock) {
+    if (prod && !esStockInfinito(prod) && newQty * unidades > prod.stock) {
       toast(`Stock insuficiente (máx ${Math.floor(prod.stock / unidades)})`, 'err');
       newQty = Math.floor(prod.stock / unidades);
     }
@@ -768,7 +770,8 @@ async function processSale() {
         if (prod) {
           const uds  = comp.qty * cartItem.qty;
           const prev = prod.stock;
-          prod.stock -= uds; prod.sold += uds; prod.revenue += prod.price * uds;
+          if (!esStockInfinito(prod)) prod.stock -= uds;
+          prod.sold += uds; prod.revenue += prod.price * uds;
           updatedProducts.push(prod);
           newMovimientos.push(registrarMovimiento(prod.id, 'venta', -uds, prev, prod.stock, '🎁 Combo: ' + cartItem.name + ' - Venta #' + saleId));
         }
@@ -778,7 +781,8 @@ async function processSale() {
       if (prod) {
         const uds  = cartItem.qty * (cartItem.unidades || 1);
         const prev = prod.stock;
-        prod.stock -= uds; prod.sold += uds; prod.revenue += cartItem.price * cartItem.qty;
+        if (!esStockInfinito(prod)) prod.stock -= uds;
+        prod.sold += uds; prod.revenue += cartItem.price * cartItem.qty;
         updatedProducts.push(prod);
         newMovimientos.push(registrarMovimiento(prod.id, 'venta', -uds, prev, prod.stock, 'Venta #' + saleId));
       }
