@@ -350,6 +350,37 @@ function selectUser(id) {
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS   = 2 * 60 * 1000;
 
+// ===== SESIÓN PERSISTENTE (no cerrar sesión al refrescar) =====
+// Guardamos sólo el id del usuario logueado (nunca la contraseña) para
+// poder restaurar la sesión automáticamente si se refresca la página.
+const SESSION_KEY = 'bazarhub_session';
+
+function saveSession(user) {
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify({ userId: user.id })); } catch (e) {}
+}
+
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+}
+
+async function tryRestoreSession() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) {}
+  if (!saved || !saved.userId) return;
+
+  const user = store.users.find(u => u.id === saved.userId);
+  if (!user) { clearSession(); return; }
+
+  store.currentUser = user;
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('app').classList.add('on');
+
+  applyRole();
+  showLoadingOverlay(true);
+  await loadFromFirebase();
+  go('ventas');
+}
+
 async function doLogin() {
   const errEl = document.getElementById('login-err');
 
@@ -398,6 +429,7 @@ async function doLogin() {
   store.loginLockedUntil = 0;
   errEl.style.display = 'none';
   store.currentUser = user;
+  saveSession(user);
   document.getElementById('login-user').value = '';
   document.getElementById('login-pass').value = '';
   document.getElementById('login').style.display = 'none';
@@ -426,6 +458,7 @@ function _handleFailedLogin(errEl) {
 
 function doLogout() {
   if (typeof stopLiveVentasHoy === 'function') stopLiveVentasHoy();
+  clearSession();
   store.currentUser = null;
   store.cart = [];
   document.getElementById('login').style.display = 'flex';
@@ -772,7 +805,9 @@ async function changeAdminPass() {
     await loadUsersFromFirebase();
     if (store.users.length === 0) {
       showSetupWizard();
+      return;
     }
+    await tryRestoreSession();
   });
 
   const btn   = document.getElementById('login-btn');
