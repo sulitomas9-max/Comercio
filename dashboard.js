@@ -606,10 +606,10 @@ function evaluateAlerts() {
   });
 
   store.products.forEach(p => {
-    if (p.stock > 0 && p.stock <= p.minStock) {
+    if (!esStockInfinito(p) && p.stock > 0 && p.stock <= p.minStock) {
       alerts.push({ type: 'warn', icon: '⚠️', title: 'Stock bajo', desc: `${p.name}: quedan ${p.stock} unidades (mínimo: ${p.minStock})`, prodId: p.id });
     }
-    if (p.stock === 0) {
+    if (!esStockInfinito(p) && p.stock === 0) {
       alerts.push({ type: 'err', icon: '🚫', title: 'Sin stock', desc: `${p.name} no tiene stock disponible`, prodId: p.id });
     }
     if (p.stock > 0 && p.sold === 0 && store.sales.length > 10) {
@@ -938,7 +938,7 @@ async function saveDevolucion() {
     const prod = store.products.find(p => p.id === item.id);
     if (prod) {
       const prev = prod.stock;
-      prod.stock += item.qty;
+      if (!esStockInfinito(prod)) prod.stock += item.qty;
       const mov = registrarMovimiento(prod.id, 'devolucion', item.qty, prev, prod.stock, `Devolución venta #${saleId} - ${motivo}`);
       updatedProducts.push(prod);
       newMovimientos.push(mov);
@@ -985,7 +985,7 @@ async function anularVenta(saleId) {
     const prod = store.products.find(p => p.id === item.id);
     if (prod) {
       const prev = prod.stock;
-      prod.stock   += item.qty;
+      if (!esStockInfinito(prod)) prod.stock += item.qty;
       prod.sold    -= item.qty;
       prod.revenue -= item.price * item.qty;
       const mov = registrarMovimiento(prod.id, 'devolucion', item.qty, prev, prod.stock, `Anulación venta #${saleId}`);
