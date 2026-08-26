@@ -43,6 +43,7 @@ const store = {
   // Carrito y pago
   cart: [],
   payMethod: 'cash',
+  splitPayment: false,
 
   // Caja
   cajaAbierta: null,
@@ -79,7 +80,30 @@ const store = {
 // ===== CONSTANTES DE PRESENTACIÓN =====
 
 const DELIVERY_LABELS = { 1: '24 hs', 2: '48 hs', 3: '72 hs', 7: '1 semana', 15: 'Quincenal' };
-const METHOD_LABELS = { cash: '💵 Efectivo', card: '💳 Tarjeta', transfer: '🏦 Transferencia' };
+const METHOD_LABELS = { cash: '💵 Efectivo', card: '💳 Tarjeta', transfer: '🏦 Transferencia', mixed: '🔀 Dividido' };
+
+// Monto de una venta que corresponde a un método de pago dado. Contempla
+// tanto las ventas de método único (cash/card/transfer) como las ventas
+// con pago dividido (method:'mixed' + paymentSplit:{cash,card,transfer}).
+function montoPorMetodo(sale, method) {
+  if (!sale) return 0;
+  if (sale.method === method) return sale.total;
+  if (sale.method === 'mixed') return (sale.paymentSplit && sale.paymentSplit[method]) || 0;
+  return 0;
+}
+
+// Agrupa un listado de ventas por método de pago, desglosando correctamente
+// las ventas con pago dividido en sus partes de efectivo/tarjeta/transferencia.
+function _groupByMethod(sales) {
+  const map = {};
+  sales.forEach(sale => {
+    ['cash', 'card', 'transfer'].forEach(m => {
+      const monto = montoPorMetodo(sale, m);
+      if (monto > 0) map[m] = (map[m] || 0) + monto;
+    });
+  });
+  return map;
+}
 const MOV_TYPE_LABELS = { venta: 'Venta', entrada: 'Entrada', ajuste: 'Ajuste', devolucion: 'Devolución', merma: 'Merma' };
 
 const NAV_ADMIN = [
@@ -635,7 +659,7 @@ function renderReportes() {
   document.getElementById('rep-gan').textContent = formatMoney(ganancia);
   document.getElementById('rep-mg').textContent = margen + '%';
 
-  _renderRankBar('rep-metodos', _groupBy(store.sales, 'method', 'total'), key => METHOD_LABELS[key] || key, '');
+  _renderRankBar('rep-metodos', _groupByMethod(store.sales), key => METHOD_LABELS[key] || key, '');
   _renderRankBar('rep-cajeros', _groupBy(store.sales, 'userName', 'total'), key => key, 'var(--blue)');
 }
 
