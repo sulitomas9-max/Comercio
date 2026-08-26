@@ -182,7 +182,7 @@ async function delMov(id) {
 
 // ===== PRODUCTOS =====
 
-function renderProducts() {
+function renderProducts(query) {
   const isAdmin = store.currentUser?.role === 'admin';
   const thCP = document.getElementById('th-costo-prod');
   const thM  = document.getElementById('th-margen');
@@ -199,7 +199,21 @@ function renderProducts() {
   const btnMerge = document.getElementById('btn-merge-prod');
   if (btnMerge) btnMerge.style.display = isAdmin ? 'inline-block' : 'none';
 
-  document.getElementById('prod-table').innerHTML = store.products.map(p => {
+  // Si no se pasa query, usamos lo que haya tipeado en el buscador (para no
+  // perder el filtro al re-renderizar tras editar/borrar un producto).
+  if (query === undefined) {
+    const searchEl = document.getElementById('prod-search');
+    query = searchEl ? searchEl.value : '';
+  }
+  const q = (query || '').trim().toLowerCase();
+  const filteredProds = q
+    ? store.products.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        (p.code && p.code.toLowerCase().includes(q)) ||
+        (p.cat && p.cat.toLowerCase().includes(q)))
+    : store.products;
+
+  document.getElementById('prod-table').innerHTML = filteredProds.map(p => {
     const margin    = p.cost > 0 ? Math.round((p.price - p.cost) / p.price * 100) : 0;
     const proveedor = store.proveedores.find(v => v.id === p.provId);
     const marginColor = margin > 30 ? 'var(--accent)' : margin > 15 ? 'var(--warn)' : 'var(--red)';
