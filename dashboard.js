@@ -96,10 +96,7 @@ function calcMetrics() {
     .slice(0, 5);
 
   // Por método de pago (hoy)
-  const byMethod = {};
-  ventasHoy.forEach(v => {
-    byMethod[v.method] = (byMethod[v.method] || 0) + v.total;
-  });
+  const byMethod = _groupByMethod(ventasHoy);
 
   return { ventasHoy, totalHoy, totalSemana, totalMes, totalPrev, ticketProm, topProds, byMethod, cambioPct };
 }
@@ -133,7 +130,12 @@ async function _fetchVentasHoyLive() {
       const t = v.total || 0;
       total += t;
       count++;
-      if      (v.method === 'cash')     cash     += t;
+      if (v.method === 'mixed') {
+        cash     += (v.paymentSplit && v.paymentSplit.cash)     || 0;
+        card     += (v.paymentSplit && v.paymentSplit.card)     || 0;
+        transfer += (v.paymentSplit && v.paymentSplit.transfer) || 0;
+      }
+      else if (v.method === 'cash')     cash     += t;
       else if (v.method === 'transfer') transfer += t;
       else if (v.method === 'card')     card     += t;
     });
@@ -510,8 +512,7 @@ function _calcularYRenderReporte() {
   if (repTicket) repTicket.textContent = formatMoney(ticket);
 
   // Por método
-  const byMethod = {};
-  ventas.forEach(v => { byMethod[v.method] = (byMethod[v.method] || 0) + v.total; });
+  const byMethod = _groupByMethod(ventas);
   _renderRankBar('rep-metodos', byMethod, k => METHOD_LABELS[k] || k, '');
 
   // Por cajero
