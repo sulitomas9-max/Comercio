@@ -64,7 +64,8 @@ function renderQSResults(q) {
 
   container.innerHTML = qs.results.map((p, i) => {
     const inCart   = store.cart.find(c => c.id === p.id);
-    const noStock  = p.stock <= 0;
+    const infinito = esStockInfinito(p);
+    const noStock  = !infinito && p.stock <= 0;
     return `
       <div class="qs-result-item ${noStock ? 'qs-no-stock' : ''} ${i === qs.searchIdx ? 'qs-selected' : ''}"
            id="qsr-${i}"
@@ -76,8 +77,8 @@ function renderQSResults(q) {
         </div>
         <div class="qs-prod-right">
           <div class="qs-prod-price">${formatMoney(p.price)}</div>
-          <div class="qs-stock-badge ${noStock ? 'qs-badge-out' : p.stock <= p.minStock ? 'qs-badge-low' : 'qs-badge-ok'}">
-            ${noStock ? 'Sin stock' : 'Stock: ' + p.stock}
+          <div class="qs-stock-badge ${noStock ? 'qs-badge-out' : (!infinito && p.stock <= p.minStock) ? 'qs-badge-low' : 'qs-badge-ok'}">
+            ${noStock ? 'Sin stock' : infinito ? 'Stock: ∞' : 'Stock: ' + p.stock}
           </div>
           ${inCart ? `<div class="qs-in-cart">✓ ${inCart.qty} en carro</div>` : ''}
         </div>
@@ -116,8 +117,8 @@ function qsKeydown(e) {
       e.preventDefault();
       if (qs.searchIdx >= 0 && qs.results[qs.searchIdx]) {
         const prod = qs.results[qs.searchIdx];
-        if (prod.stock > 0) qsAddProduct(prod.id);
-      } else if (qs.results.length === 1 && qs.results[0].stock > 0) {
+        if (esStockInfinito(prod) || prod.stock > 0) qsAddProduct(prod.id);
+      } else if (qs.results.length === 1 && (esStockInfinito(qs.results[0]) || qs.results[0].stock > 0)) {
         qsAddProduct(qs.results[0].id);
       }
       break;
