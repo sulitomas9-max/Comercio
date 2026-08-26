@@ -191,6 +191,14 @@ function closeSidebar() {
 function formatMoney(amount) {
   return '$' + amount.toLocaleString();
 }
+
+// Determina si un producto tiene stock ilimitado (no bloquea ventas ni
+// genera alertas de stock bajo/agotado). Por el momento, TODOS los
+// productos se consideran de stock ilimitado salvo que se desactive
+// explícitamente (stockInfinito === false) desde el formulario del producto.
+function esStockInfinito(p) {
+  return !!p && p.stockInfinito !== false;
+}
 // ===== AUTOCOMPLETADO DE NOMBRE DE PRODUCTO =====
 // Se usa al cargar un producto nuevo (desde la caja o desde Stock) para
 // avisar si ya existe uno con nombre parecido y evitar duplicados.
@@ -214,7 +222,7 @@ function suggestProductNames(inputId, sugId) {
   box.innerHTML = matches.map(p => `
     <div class="name-sug-item" onmousedown="pickProductName('${inputId}','${sugId}',${p.id})">
       <span>${p.name}</span>
-      <span class="name-sug-meta">${formatMoney(p.price)} · stock ${p.stock}</span>
+      <span class="name-sug-meta">${formatMoney(p.price)} · stock ${esStockInfinito(p) ? '∞' : p.stock}</span>
     </div>`).join('') +
     `<div class="name-sug-hint">Ya existe algo parecido — elegilo si es el mismo producto</div>`;
 }
