@@ -44,6 +44,7 @@ const store = {
   cart: [],
   payMethod: 'cash',
   splitPayment: false,
+  drafts: [],
 
   // Caja
   cajaAbierta: null,
@@ -538,7 +539,7 @@ function go(page) {
   if (page !== 'dashboard' && typeof stopLiveVentasHoy === 'function') stopLiveVentasHoy();
 
   const renders = {
-    ventas:      () => updateCajaBar(),
+    ventas:      () => { updateCajaBar(); renderDrafts(); },
     historial:   () => renderHistory(),
     dashboard:   () => { renderDashboard(); renderAlerts(); startLiveVentasHoy(); },
     stock:       () => renderStockPage(),
@@ -824,6 +825,8 @@ async function changeAdminPass() {
 
 // ===== INIT =====
 (function init() {
+  loadDrafts();
+
   // Cargamos usuarios desde Firebase antes de mostrar el login
   waitForFirebase(async () => {
     await loadUsersFromFirebase();
