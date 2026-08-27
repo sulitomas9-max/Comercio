@@ -916,78 +916,94 @@ function registrarMovimiento(prodId, tipo, cantidad, stockAntes, stockDespues, m
 async function processSale() {
   if (!store.cajaAbierta) { toast('Abrí la caja primero', 'err'); return; }
   if (!store.cart.length)  { toast('El carrito está vacío', 'err'); return; }
+  // Evita ventas duplicadas si se toca "Cobrar" más de una vez (doble clic,
+  // conexión lenta, etc.): esta comprobación corre de forma sincrónica antes
+  // de cualquier await, así que una segunda invocación mientras la primera
+  // sigue en curso se corta acá.
+  if (store._processingSale) return;
+  store._processingSale = true;
+  const cobrarBtn = document.getElementById('cobrar-btn');
+  if (cobrarBtn) cobrarBtn.disabled = true;
 
-  const subtotal  = store.cart.reduce((s, c) => s + c.price * c.qty, 0);
-  const descPct   = parseFloat(document.getElementById('desc-pct')?.value) || 0;
-  const descMonto = Math.round(subtotal * descPct / 100);
-  const total     = subtotal - descMonto;
+  try {
+    const subtotal  = store.cart.reduce((s, c) => s + c.price * c.qty, 0);
+    const descPct   = parseFloat(document.getElementById('desc-pct')?.value) || 0;
+    const descMonto = Math.round(subtotal * descPct / 100);
+    const total     = subtotal - descMonto;
 
-  let paymentSplit = null;
+    let paymentSplit = null;
 
-  if (store.splitPayment) {
-    const cash     = parseFloat(document.getElementById('split-cash')?.value)     || 0;
-    const card     = parseFloat(document.getElementById('split-card')?.value)     || 0;
-    const transfer = parseFloat(document.getElementById('split-transfer')?.value) || 0;
-    const suma     = Math.round(cash + card + transfer);
-    if (suma <= 0) { toast('Ingresá los montos del pago dividido', 'err'); return; }
-    if (suma !== total) {
-      toast(suma < total ? 'Falta cubrir el total entre los métodos' : 'El pago dividido supera el total de la venta', 'err');
-      return;
+    if (store.splitPayment) {
+      const cash     = parseFloat(document.getElementById('split-cash')?.value)     || 0;
+      const card     = parseFloat(document.getElementById('split-card')?.value)     || 0;
+      const transfer = parseFloat(document.getElementById('split-transfer')?.value) || 0;
+      const suma     = Math.round(cash + card + transfer);
+      if (suma <= 0) { toast('Ingresá los montos del pago dividido', 'err'); return; }
+      if (suma !== total) {
+        toast(suma < total ? 'Falta cubrir el total entre los métodos' : 'El pago dividido supera el total de la venta', 'err');
+        return;
+      }
+      paymentSplit = { cash, card, transfer };
+    } else if (store.payMethod === 'cash') {
+      const received = parseFloat(document.getElementById('cash-recv').value) || 0;
+      if (received < total) { toast('Monto insuficiente', 'err'); return; }
     }
-    paymentSplit = { cash, card, transfer };
-  } else if (store.payMethod === 'cash') {
-    const received = parseFloat(document.getElementById('cash-recv').value) || 0;
-    if (received < total) { toast('Monto insuficiente', 'err'); return; }
-  }
 
-  const saleId = store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
-  const now    = new Date();
-  const updatedProducts = [];
-  const newMovimientos  = [];
+    const saleId = store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
+    const now    = new Date();
+    const updatedProducts = [];
+    const newMovimientos  = [];
 
-  store.cart.forEach(cartItem => {
-    if (cartItem.isCombo) {
-      cartItem.comboItems.forEach(comp => {
-        const prod = store.products.find(p => p.id === comp.prodId);
+    store.cart.forEach(cartItem => {
+      if (cartItem.isCombo) {
+        cartItem.comboItems.forEach(comp => {
+          const prod = store.products.find(p => p.id === comp.prodId);
+          if (prod) {
+            const uds  = comp.qty * cartItem.qty;
+            const prev = prod.stock;
+            if (!esStockInfinito(prod)) prod.stock -= uds;
+            prod.sold += uds; prod.revenue += prod.price * uds;
+            updatedProducts.push(prod);
+            newMovimientos.push(registrarMovimiento(prod.id, 'venta', -uds, prev, prod.stock, '🎁 Combo: ' + cartItem.name + ' - Venta #' + saleId));
+          }
+        });
+      } else {
+        const prod = store.products.find(p => p.id === cartItem.id);
         if (prod) {
-          const uds  = comp.qty * cartItem.qty;
+          const uds  = cartItem.qty * (cartItem.unidades || 1);
           const prev = prod.stock;
           if (!esStockInfinito(prod)) prod.stock -= uds;
-          prod.sold += uds; prod.revenue += prod.price * uds;
+          prod.sold += uds; prod.revenue += cartItem.price * cartItem.qty;
           updatedProducts.push(prod);
-          newMovimientos.push(registrarMovimiento(prod.id, 'venta', -uds, prev, prod.stock, '🎁 Combo: ' + cartItem.name + ' - Venta #' + saleId));
+          newMovimientos.push(registrarMovimiento(prod.id, 'venta', -uds, prev, prod.stock, 'Venta #' + saleId));
         }
-      });
-    } else {
-      const prod = store.products.find(p => p.id === cartItem.id);
-      if (prod) {
-        const uds  = cartItem.qty * (cartItem.unidades || 1);
-        const prev = prod.stock;
-        if (!esStockInfinito(prod)) prod.stock -= uds;
-        prod.sold += uds; prod.revenue += cartItem.price * cartItem.qty;
-        updatedProducts.push(prod);
-        newMovimientos.push(registrarMovimiento(prod.id, 'venta', -uds, prev, prod.stock, 'Venta #' + saleId));
       }
-    }
-  });
+    });
 
-  const sale = {
-    id: saleId, cajaId: store.cajaAbierta.id,
-    date: `${now.getDate()}/${now.getMonth()+1}/${now.getFullYear()}`,
-    time: now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
-    items: [...store.cart], subtotal, descuento: descMonto, descPct, total,
-    method: paymentSplit ? 'mixed' : store.payMethod,
-    userId: store.currentUser.id, userName: store.currentUser.name,
-  };
-  if (paymentSplit) sale.paymentSplit = paymentSplit;
-  store.sales.push(sale);
-  await saveSale(sale, updatedProducts, newMovimientos);
+    const sale = {
+      id: saleId, cajaId: store.cajaAbierta.id,
+      date: `${now.getDate()}/${now.getMonth()+1}/${now.getFullYear()}`,
+      time: now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+      items: [...store.cart], subtotal, descuento: descMonto, descPct, total,
+      method: paymentSplit ? 'mixed' : store.payMethod,
+      userId: store.currentUser.id, userName: store.currentUser.name,
+    };
+    if (paymentSplit) sale.paymentSplit = paymentSplit;
+    store.sales.push(sale);
+    await saveSale(sale, updatedProducts, newMovimientos);
 
-  generateTicket(sale);
-  store.cart = [];
-  resetPagoInputs();
-  renderCart();
-  updateCajaBar();
+    generateTicket(sale);
+    store.cart = [];
+    resetPagoInputs();
+    renderCart();
+    updateCajaBar();
+  } finally {
+    store._processingSale = false;
+    // updateCajaBar() ya re-habilita el botón si la caja sigue abierta; esto
+    // cubre además los casos de "return" temprano (validaciones) donde
+    // updateCajaBar() no llega a ejecutarse.
+    if (cobrarBtn && store.cajaAbierta) cobrarBtn.disabled = false;
+  }
 }
 
 function generateTicket(sale) {
