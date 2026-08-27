@@ -913,6 +913,35 @@ function registrarMovimiento(prodId, tipo, cantidad, stockAntes, stockDespues, m
   return mov;
 }
 
+// ===== DETECCIÓN DE VENTAS DUPLICADAS =====
+// Además del guard de processSale() (que evita doble clic dentro de la misma
+// pestaña), esto compara el carrito contra las últimas ventas de esta caja:
+// si hay una venta prácticamente idéntica (mismos productos/cantidades,
+// mismo total y mismo método) registrada hace muy poco, probablemente sea un
+// reintento accidental (se recargó la página porque tardaba, dos pestañas o
+// dispositivos abiertos con la misma caja, etc.) y no una segunda venta real.
+const VENTANA_DUPLICADO_MS = 2 * 60 * 1000; // 2 minutos
+
+function firmaCarrito(items) {
+  return (items || [])
+    .map(i => `${i.isCombo ? 'combo' : 'prod'}:${i.id}:${i.qty}`)
+    .sort()
+    .join('|');
+}
+
+function buscarVentaDuplicadaReciente(cart, total, method, ahoraMs) {
+  if (!store.cajaAbierta) return null;
+  const firma = firmaCarrito(cart);
+  return store.sales.find(s =>
+    s.cajaId === store.cajaAbierta.id &&
+    typeof s.ts === 'number' &&
+    (ahoraMs - s.ts) <= VENTANA_DUPLICADO_MS &&
+    Math.round(s.total) === Math.round(total) &&
+    s.method === method &&
+    firmaCarrito(s.items) === firma
+  ) || null;
+}
+
 async function processSale() {
   if (!store.cajaAbierta) { toast('Abrí la caja primero', 'err'); return; }
   if (!store.cart.length)  { toast('El carrito está vacío', 'err'); return; }
@@ -949,8 +978,18 @@ async function processSale() {
       if (received < total) { toast('Monto insuficiente', 'err'); return; }
     }
 
+    const now         = new Date();
+    const metodoVenta = paymentSplit ? 'mixed' : store.payMethod;
+
+    const ventaDuplicada = buscarVentaDuplicadaReciente(store.cart, total, metodoVenta, now.getTime());
+    if (ventaDuplicada) {
+      const seguir = confirm(
+        `Ya se registró una venta muy parecida hace instantes (Venta #${ventaDuplicada.id}, ${ventaDuplicada.time}, ${formatMoney(ventaDuplicada.total)}).\n\n¿Seguro que esta es una venta distinta y no un cobro duplicado?`
+      );
+      if (!seguir) { return; }
+    }
+
     const saleId = store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
-    const now    = new Date();
     const updatedProducts = [];
     const newMovimientos  = [];
 
@@ -984,8 +1023,9 @@ async function processSale() {
       id: saleId, cajaId: store.cajaAbierta.id,
       date: `${now.getDate()}/${now.getMonth()+1}/${now.getFullYear()}`,
       time: now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+      ts: now.getTime(),
       items: [...store.cart], subtotal, descuento: descMonto, descPct, total,
-      method: paymentSplit ? 'mixed' : store.payMethod,
+      method: metodoVenta,
       userId: store.currentUser.id, userName: store.currentUser.name,
     };
     if (paymentSplit) sale.paymentSplit = paymentSplit;
