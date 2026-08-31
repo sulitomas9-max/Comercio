@@ -850,5 +850,17 @@
 <script src="importar.js?v=5"></script>
 <script src="gastos.js?v=2"></script>
 
+<script>
+  // Registra el Service Worker para que la app siga funcionando sin wifi.
+  // Los datos se sincronizan aparte (ver firebase.js) apenas vuelve la conexión.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(err => {
+        console.warn('No se pudo registrar el Service Worker:', err);
+      });
+    });
+  }
+</script>
+
 </body>
 </html>
