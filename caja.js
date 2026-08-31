@@ -1183,6 +1183,7 @@ function _aplicarFiltroHistorial() {
     if (empty) empty.style.display = 'block';
     _updateHistMetrics([]);
     _renderHistorialDevoluciones();
+    _renderHistorialRetiros();
     _renderHistorialCajas();
     return;
   }
@@ -1210,6 +1211,7 @@ function _aplicarFiltroHistorial() {
       </tr>`).join('');
   }
   _renderHistorialDevoluciones();
+  _renderHistorialRetiros();
   _renderHistorialCajas();
 }
 
@@ -1240,6 +1242,35 @@ function _renderHistorialDevoluciones() {
       <td><span class="badge ${d.type === 'anulacion' ? 'out' : 'warn'}">${d.type === 'anulacion' ? 'Anulación' : 'Parcial'}</span></td>
       <td>${d.items.map(i => `${i.name} ×${i.qty}`).join(', ')}</td>
       <td>${formatMoney(d.total)}</td><td>${d.motivo}</td><td>${d.userName}</td>
+    </tr>`).join('');
+}
+
+// Arma una etiqueta legible para identificar a qué caja (turno) pertenece
+// un retiro: el nombre del cajero responsable + la fecha de apertura,
+// buscando primero en la caja actualmente abierta y si no en el historial.
+function _labelCaja(cajaId) {
+  if (store.cajaAbierta && store.cajaAbierta.id === cajaId) {
+    return `${store.cajaAbierta.cajeroNombre || 'Caja'} (abierta)`;
+  }
+  const c = store.cajaHistory.find(c => c.id === cajaId);
+  if (c) return `${c.cajeroNombre || 'Caja'}${c.inicio ? ' · ' + c.inicio : ''}`;
+  return `Caja #${cajaId}`;
+}
+
+function _renderHistorialRetiros() {
+  const tb = document.getElementById('retiros-hist-table');
+  const em = document.getElementById('retiros-hist-empty');
+  if (!tb) return;
+  const retiros = store.retiros || [];
+  if (!retiros.length) { tb.innerHTML = ''; if (em) em.style.display = 'block'; return; }
+  if (em) em.style.display = 'none';
+  tb.innerHTML = [...retiros].sort((a, b) => b.id - a.id).map(r => `
+    <tr>
+      <td>${r.fecha}</td>
+      <td style="font-size:12px;color:var(--txt2)">${_labelCaja(r.cajaId)}</td>
+      <td style="color:var(--red);font-weight:600">${formatMoney(r.monto)}</td>
+      <td>${r.motivo}</td>
+      <td>${r.userName}</td>
     </tr>`).join('');
 }
 
