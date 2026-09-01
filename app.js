@@ -416,66 +416,79 @@ async function tryRestoreSession() {
 }
 
 async function doLogin() {
-  const errEl = document.getElementById('login-err');
+  // Evita que clicks repetidos o Enter mantenido disparen doLogin() varias
+  // veces en paralelo mientras la verificación async todavía está en curso
+  // (mismo patrón que _processingSale para el botón "Cobrar").
+  if (store._loggingIn) return;
+  store._loggingIn = true;
+  const loginBtn = document.getElementById('login-btn');
+  if (loginBtn) loginBtn.disabled = true;
 
-  // ¿Está bloqueado?
-  if (store.loginLockedUntil > Date.now()) {
-    const secs = Math.ceil((store.loginLockedUntil - Date.now()) / 1000);
-    errEl.textContent = `Demasiados intentos. Esperá ${secs}s`;
-    errEl.style.display = 'block';
-    return;
-  }
+  try {
+    const errEl = document.getElementById('login-err');
 
-  const inputUser = document.getElementById('login-user').value.trim().toLowerCase();
-  const pass = document.getElementById('login-pass').value;
+    // ¿Está bloqueado?
+    if (store.loginLockedUntil > Date.now()) {
+      const secs = Math.ceil((store.loginLockedUntil - Date.now()) / 1000);
+      errEl.textContent = `Demasiados intentos. Esperá ${secs}s`;
+      errEl.style.display = 'block';
+      return;
+    }
 
-  if (!inputUser) {
-    errEl.textContent = 'Ingresá tu nombre de usuario';
-    errEl.style.display = 'block';
-    return;
-  }
-  if (!pass) {
-    errEl.textContent = 'Ingresá tu contraseña';
-    errEl.style.display = 'block';
-    return;
-  }
+    const inputUser = document.getElementById('login-user').value.trim().toLowerCase();
+    const pass = document.getElementById('login-pass').value;
 
-  // Buscar usuario por nombre (case-insensitive)
-  const user = store.users.find(u => u.name.trim().toLowerCase() === inputUser);
+    if (!inputUser) {
+      errEl.textContent = 'Ingresá tu nombre de usuario';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (!pass) {
+      errEl.textContent = 'Ingresá tu contraseña';
+      errEl.style.display = 'block';
+      return;
+    }
 
-  if (!user) {
-    store.loginAttempts++;
-    _handleFailedLogin(errEl);
-    return;
-  }
+    // Buscar usuario por nombre (case-insensitive)
+    const user = store.users.find(u => u.name.trim().toLowerCase() === inputUser);
 
-  // Verificar hash
-  const ok = await verifyPass(pass, user.passHash);
+    if (!user) {
+      store.loginAttempts++;
+      _handleFailedLogin(errEl);
+      return;
+    }
 
-  if (!ok) {
-    store.loginAttempts++;
-    _handleFailedLogin(errEl);
-    return;
-  }
+    // Verificar hash
+    const ok = await verifyPass(pass, user.passHash);
 
-  // Login exitoso
-  store.loginAttempts = 0;
-  store.loginLockedUntil = 0;
-  errEl.style.display = 'none';
-  store.currentUser = user;
-  saveSession(user);
-  document.getElementById('login-user').value = '';
-  document.getElementById('login-pass').value = '';
-  document.getElementById('login').style.display = 'none';
-  document.getElementById('app').classList.add('on');
+    if (!ok) {
+      store.loginAttempts++;
+      _handleFailedLogin(errEl);
+      return;
+    }
 
-  applyRole();
-  showLoadingOverlay(true);
-  waitForFirebase(() => {
-    loadFromFirebase().then(() => {
-      go('ventas');
+    // Login exitoso
+    store.loginAttempts = 0;
+    store.loginLockedUntil = 0;
+    errEl.style.display = 'none';
+    store.currentUser = user;
+    saveSession(user);
+    document.getElementById('login-user').value = '';
+    document.getElementById('login-pass').value = '';
+    document.getElementById('login').style.display = 'none';
+    document.getElementById('app').classList.add('on');
+
+    applyRole();
+    showLoadingOverlay(true);
+    waitForFirebase(() => {
+      loadFromFirebase().then(() => {
+        go('ventas');
+      });
     });
-  });
+  } finally {
+    store._loggingIn = false;
+    if (loginBtn) loginBtn.disabled = false;
+  }
 }
 
 function _handleFailedLogin(errEl) {
