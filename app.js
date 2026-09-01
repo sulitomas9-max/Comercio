@@ -76,6 +76,11 @@ const store = {
   // Control de bloqueo por intentos fallidos
   loginAttempts: 0,
   loginLockedUntil: 0,
+
+  // true recién cuando loadUsersFromFirebase() (o su respaldo local) terminó
+  // al menos una vez. Antes de eso store.users puede estar vacío aunque el
+  // usuario y contraseña sean correctos (ver doLogin/_waitUsersReady).
+  usersReady: false,
 };
 
 // ===== CONSTANTES DE PRESENTACIÓN =====
@@ -415,6 +420,25 @@ async function tryRestoreSession() {
   go('ventas');
 }
 
+// Espera hasta que store.usersReady sea true (o se cumpla el timeout).
+// Se usa en doLogin() para no rechazar un login válido solo porque la lista
+// de usuarios todavía no terminó de llegar de Firebase (conexión lenta).
+function _waitUsersReady(timeoutMs) {
+  return new Promise(resolve => {
+    if (store.usersReady) { resolve(true); return; }
+    const start = Date.now();
+    const iv = setInterval(() => {
+      if (store.usersReady) {
+        clearInterval(iv);
+        resolve(true);
+      } else if (Date.now() - start > timeoutMs) {
+        clearInterval(iv);
+        resolve(false);
+      }
+    }, 150);
+  });
+}
+
 async function doLogin() {
   // Evita que clicks repetidos o Enter mantenido disparen doLogin() varias
   // veces en paralelo mientras la verificación async todavía está en curso
@@ -426,6 +450,22 @@ async function doLogin() {
 
   try {
     const errEl = document.getElementById('login-err');
+
+    // Si la lista de usuarios todavía no terminó de cargar (recién se abrió
+    // la app con conexión lenta), esperamos en vez de rechazar el login como
+    // si la contraseña estuviera mal — si no, alguien que escribe rápido
+    // apenas abre la página puede ver "incorrecto" con los datos bien.
+    if (!store.usersReady) {
+      errEl.textContent = 'Cargando datos, esperá un momento...';
+      errEl.style.display = 'block';
+      const ready = await _waitUsersReady(8000);
+      if (!ready) {
+        errEl.textContent = 'No se pudo conectar. Revisá tu conexión e intentá de nuevo.';
+        errEl.style.display = 'block';
+        return;
+      }
+      errEl.style.display = 'none';
+    }
 
     // ¿Está bloqueado?
     if (store.loginLockedUntil > Date.now()) {
@@ -859,6 +899,7 @@ async function changeAdminPass() {
   waitForFirebase(async () => {
     loadDrafts();
     await loadUsersFromFirebase();
+    store.usersReady = true;
     if (store.users.length === 0) {
       showSetupWizard();
       return;
