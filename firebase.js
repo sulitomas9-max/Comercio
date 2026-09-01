@@ -194,19 +194,27 @@ function initFirebase() {
  */
 function waitForFirebase(callback, tries = 0) {
   if (typeof firebase === 'undefined' || !initFirebase()) {
-    if (tries < 30) {
-      setTimeout(() => waitForFirebase(callback, tries + 1), 200);
-    } else {
-      // Sin Firebase: intentar con caché local
+    if (tries === 30) {
+      // A los ~6s sin conexión: si hay datos guardados en este dispositivo
+      // los usamos para no dejar a la persona colgada, pero seguimos
+      // intentando conectar de fondo (más espaciado) — antes, cuando no
+      // había caché local, se dejaba de intentar para siempre y hacía
+      // falta recargar la página a mano apenas volvía la señal.
       const hasLocal = loadLocalData();
       if (hasLocal) {
         toast('Sin conexión. Usando datos guardados localmente.', 'warn');
         updateConnBadge();
         callback();
-      } else {
-        toast('No se pudo conectar a Firebase y no hay datos locales.', 'err');
-        showLoadingOverlay(false);
       }
+    }
+    if (tries < 150) {
+      setTimeout(() => waitForFirebase(callback, tries + 1), tries < 30 ? 200 : 1000);
+      return;
+    }
+    // ~126s intentando: recién acá nos damos por vencidos de verdad.
+    if (!loadLocalData()) {
+      toast('No se pudo conectar a Firebase y no hay datos locales.', 'err');
+      showLoadingOverlay(false);
     }
     return;
   }
