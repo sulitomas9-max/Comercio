@@ -458,7 +458,7 @@ async function doLogin() {
     if (!store.usersReady) {
       errEl.textContent = 'Cargando datos, esperá un momento...';
       errEl.style.display = 'block';
-      const ready = await _waitUsersReady(8000);
+      const ready = await _waitUsersReady(20000);
       if (!ready) {
         errEl.textContent = 'No se pudo conectar. Revisá tu conexión e intentá de nuevo.';
         errEl.style.display = 'block';
