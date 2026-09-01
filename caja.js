@@ -117,10 +117,12 @@ async function abrirCaja() {
   const uid     = document.getElementById('caj-cajero-sel').value;
   const user    = store.users.find(u => u.id === uid) || store.currentUser;
 
-  // FIX: usar el máximo id existente + 1 para evitar duplicados
-  const newId = store.cajaHistory.length
-    ? Math.max(...store.cajaHistory.map(c => c.id)) + 1
-    : 1;
+  // ID único basado en la hora exacta. Antes se calculaba como
+  // "el id más alto que tengo cargado localmente, + 1", pero si el
+  // dispositivo estaba offline o con datos incompletos, dos cajas
+  // distintas podían calcular el mismo número y una terminaba pisando
+  // (sobrescribiendo) los datos de la otra al sincronizar con Firebase.
+  const newId = Date.now();
 
   store.cajaAbierta = {
     id:           newId,
@@ -1254,6 +1256,7 @@ function _labelCaja(cajaId) {
   }
   const c = store.cajaHistory.find(c => c.id === cajaId);
   if (c) return `${c.cajeroNombre || 'Caja'}${c.inicio ? ' · ' + c.inicio : ''}`;
+  if (cajaId == null) return 'Registro antiguo (caja no identificada)';
   return `Caja #${cajaId}`;
 }
 
