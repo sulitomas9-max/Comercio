@@ -142,6 +142,15 @@ const NAV_CAJERO = [
   ]},
 ];
 
+// Páginas que solo aparecen en NAV_ADMIN (antes solo se ocultaban del menú
+// lateral para los cajeros, pero go(page) no verificaba nada — cualquiera
+// podía escribir go('usuarios') en la consola del navegador y llegar igual.
+// Ahora se bloquea también acá, ver función go()).
+const ADMIN_ONLY_PAGES = new Set(
+  NAV_ADMIN.flatMap(s => s.items.map(i => i.id))
+    .filter(id => !NAV_CAJERO.flatMap(s => s.items.map(i => i.id)).includes(id))
+);
+
 const PAGE_TITLES = {
   ventas:      'Ventas y caja',
   historial:   'Historial',
@@ -522,6 +531,10 @@ function applyRole() {
 
 function go(page) {
   if (!store.currentUser) return;
+  if (ADMIN_ONLY_PAGES.has(page) && store.currentUser.role !== 'admin') {
+    toast('No autorizado', 'err');
+    return;
+  }
 
   document.querySelectorAll('.page').forEach(p => p.classList.remove('act'));
   const pageEl = document.getElementById('page-' + page);
@@ -767,6 +780,7 @@ function openUserModal() {
 }
 
 async function saveUserForm() {
+  if (!store.currentUser || store.currentUser.role !== 'admin') { toast('No autorizado', 'err'); return; }
   const name = document.getElementById('u-name').value.trim();
   const pass = document.getElementById('u-pass').value;
   if (!name) { showMsg('msg-user', 'Ingresá el nombre', 'err'); return; }
@@ -788,6 +802,7 @@ async function saveUserForm() {
 }
 
 async function changeCajeroPass(id) {
+  if (!store.currentUser || store.currentUser.role !== 'admin') { toast('No autorizado', 'err'); return; }
   const input = document.getElementById('pass-' + id);
   const val = input?.value;
   if (!val || val.length < 4) { toast('Mínimo 4 caracteres', 'err'); return; }
@@ -802,6 +817,7 @@ async function changeCajeroPass(id) {
 }
 
 async function delUser(id) {
+  if (!store.currentUser || store.currentUser.role !== 'admin') { toast('No autorizado', 'err'); return; }
   if (!confirm('¿Eliminar cajero?')) return;
   store.users = store.users.filter(u => u.id !== id);
   await removeUser(id);
@@ -811,6 +827,7 @@ async function delUser(id) {
 }
 
 async function changeAdminPass() {
+  if (!store.currentUser || store.currentUser.role !== 'admin') { toast('No autorizado', 'err'); return; }
   const val = document.getElementById('admin-pass-new').value;
   if (!val || val.length < 4) { showMsg('msg-admin', 'Mínimo 4 caracteres', 'err'); return; }
   const admin = store.users.find(u => u.role === 'admin');
