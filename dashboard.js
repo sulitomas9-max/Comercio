@@ -794,7 +794,7 @@ function _aplicarFiltroHistorial() {
         }</td>
         <td>
           ${!v.anulada ? `<button class="btn sm" onclick="openDevolucionModal(${v.id})">Dev.</button>` : ''}
-          <button class="btn sm" onclick="printTicket(${v.id})" style="margin-left:4px">🧾</button>
+          <button class="btn sm" onclick="verTicket(${v.id})" style="margin-left:4px">🧾</button>
         </td>
       </tr>`).join('');
   }
