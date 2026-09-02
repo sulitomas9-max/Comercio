@@ -26,6 +26,39 @@ function addToOfflineQueue(operation) {
   updateConnBadge();
 }
 
+// Ejecuta una promesa con un límite de tiempo: si no termina dentro de "ms"
+// se rechaza, para no dejar la app colgada para siempre esperando algo que
+// nunca va a resolver (ver initFirebase/_ensureAuth/loadUsersFromFirebase).
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${label}`)), ms)),
+  ]);
+}
+
+// Borra, una única vez por dispositivo, cualquier caché vieja de Firestore
+// en IndexedDB que haya quedado de versiones anteriores de la app (cuando
+// se usaba db.enablePersistence). Esa caché podía corromperse con el uso
+// -sobre todo en Safari/iOS en modo "app" desde el ícono de pantalla de
+// inicio- y una vez corrompida TODAS las lecturas a Firestore se quedaban
+// colgadas para siempre sin ningún error, lo que impedía iniciar sesión
+// hasta entrar en modo privado (que arranca con un IndexedDB limpio).
+function _cleanupOldFirestoreCache() {
+  try {
+    if (localStorage.getItem('bazarhub_idb_cleaned_v1')) return;
+    localStorage.setItem('bazarhub_idb_cleaned_v1', '1');
+    if (typeof indexedDB !== 'undefined' && indexedDB.databases) {
+      indexedDB.databases().then(dbs => {
+        dbs.forEach(d => {
+          if (d.name && d.name.indexOf('firestore/') === 0) {
+            indexedDB.deleteDatabase(d.name);
+          }
+        });
+      }).catch(() => {});
+    }
+  } catch (e) {}
+}
+
 function saveLocalData() {
   try {
     const snapshot = {
@@ -178,12 +211,12 @@ function initFirebase() {
   db   = firebase.firestore();
   auth = firebase.auth();
 
-  // Persistencia offline de Firestore (caché adicional del SDK)
-  db.enablePersistence({ synchronizeTabs: true }).catch(err => {
-    if (err.code !== 'failed-precondition' && err.code !== 'unimplemented') {
-      console.warn('Persistencia Firestore:', err.code);
-    }
-  });
+  // Nota: acá antes se activaba db.enablePersistence(), pero se sacó
+  // porque su caché en IndexedDB se podía corromper con el uso y colgaba
+  // el login (ver _cleanupOldFirestoreCache). BazarHub ya tiene su propio
+  // caché offline manual con localStorage (arriba en este archivo), así
+  // que no hace falta la persistencia propia de Firestore.
+  _cleanupOldFirestoreCache();
 
   return true;
 }
@@ -232,7 +265,7 @@ function _ensureAuth(callback) {
     callback();
     return;
   }
-  auth.signInAnonymously()
+  withTimeout(auth.signInAnonymously(), 10000, 'autenticación anónima')
     .then(() => {
       callback();
     })
@@ -306,7 +339,7 @@ async function loadUsersFromFirebase() {
     return;
   }
   try {
-    const snap = await db.collection('users').get();
+    const snap = await withTimeout(db.collection('users').get(), 10000, 'cargar usuarios');
     store.users = [];
     snap.forEach(d => store.users.push({ ...d.data(), id: d.id }));
     const needsMigration = store.users.some(u => u.pass && !u.passHash);
