@@ -368,27 +368,33 @@ async function loadFromFirebase() {
 
   showLoadingOverlay(true);
   try {
-    // Todas las colecciones se cargan adentro de un único límite de tiempo.
-    // Antes cada _load...() esperaba a Firestore sin ningún límite: si
-    // Firestore se colgaba en cualquiera de las ~12 colecciones (conexión
-    // mala, algún problema puntual del SDK, etc.), la pantalla se quedaba
-    // en "Cargando datos..." para siempre, sin error y sin caer al
-    // respaldo local. Ahora, pasados 25s sin terminar, se corta y se usan
-    // los datos guardados localmente (mismo mecanismo que ya se usa para
-    // el login, ver withTimeout más arriba en este archivo).
+    // Las ~11 colecciones son independientes entre sí (cada una llena su
+    // propia parte de "store" y ninguna necesita el resultado de otra), así
+    // que se piden todas al mismo tiempo en vez de una atrás de la otra.
+    // Antes, con miles de ventas/movimientos ya cargados, cada colección
+    // sumaba su propio viaje de ida y vuelta a Firestore en fila (12
+    // esperas seguidas), y eso solo -sin ningún problema de conexión- ya
+    // tardaba muchos segundos. Pedirlas en paralelo hace que el tiempo
+    // total sea el de la colección más lenta, no la suma de todas.
+    // Además sigue protegido con un único límite de tiempo: si Firestore
+    // se cuelga en cualquiera (conexión mala, algún problema puntual del
+    // SDK, etc.), a los 25s se corta y se usan los datos guardados
+    // localmente en vez de quedarse en "Cargando datos..." para siempre.
     await withTimeout((async () => {
-      await _loadProducts();
-      await _loadProveedores();
-      await _loadSales();
-      await _loadOrders();
-      await _loadMovimientos();
-      await _loadCtaCte();
-      await _loadRetiros();
-      await _loadCajas();
-      await _loadConfig();
-      await _loadUsers();
-      await _loadDevoluciones();
-      await _loadCombos();
+      await Promise.all([
+        _loadProducts(),
+        _loadProveedores(),
+        _loadSales(),
+        _loadOrders(),
+        _loadMovimientos(),
+        _loadCtaCte(),
+        _loadRetiros(),
+        _loadCajas(),
+        _loadConfig(),
+        _loadUsers(),
+        _loadDevoluciones(),
+        _loadCombos(),
+      ]);
       saveLocalData();
       await syncOfflineQueue();
     })(), 25000, 'cargar datos del sistema');
