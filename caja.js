@@ -258,8 +258,15 @@ async function saveRetiro() {
     ? document.getElementById('retiro-motivo-otro').value.trim() || 'Otro'
     : motivoSel;
 
+  // ID único basado en la hora exacta, igual que el id de caja (ver
+  // abrirCaja en este mismo archivo). Antes se calculaba como "el id de
+  // retiro más alto que tengo cargado localmente, + 1" (store.nextRetiroId),
+  // y si el dispositivo estaba offline o con datos incompletos, dos retiros
+  // distintos podían calcular el mismo número: al guardar en Firebase, el
+  // segundo pisaba (sobrescribía) por completo los datos del primero. Esto
+  // es lo que producía "retiros falsos" o con montos/motivos mezclados.
   const retiro = {
-    id:       store.nextRetiroId++,
+    id:       Date.now(),
     cajaId:   store.cajaAbierta.id,
     monto, motivo,
     userId:   store.currentUser.id,
