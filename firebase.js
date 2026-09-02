@@ -368,20 +368,30 @@ async function loadFromFirebase() {
 
   showLoadingOverlay(true);
   try {
-    await _loadProducts();
-    await _loadProveedores();
-    await _loadSales();
-    await _loadOrders();
-    await _loadMovimientos();
-    await _loadCtaCte();
-    await _loadRetiros();
-    await _loadCajas();
-    await _loadConfig();
-    await _loadUsers();
-    await _loadDevoluciones();
-    await _loadCombos();
-    saveLocalData();
-    await syncOfflineQueue();
+    // Todas las colecciones se cargan adentro de un único límite de tiempo.
+    // Antes cada _load...() esperaba a Firestore sin ningún límite: si
+    // Firestore se colgaba en cualquiera de las ~12 colecciones (conexión
+    // mala, algún problema puntual del SDK, etc.), la pantalla se quedaba
+    // en "Cargando datos..." para siempre, sin error y sin caer al
+    // respaldo local. Ahora, pasados 25s sin terminar, se corta y se usan
+    // los datos guardados localmente (mismo mecanismo que ya se usa para
+    // el login, ver withTimeout más arriba en este archivo).
+    await withTimeout((async () => {
+      await _loadProducts();
+      await _loadProveedores();
+      await _loadSales();
+      await _loadOrders();
+      await _loadMovimientos();
+      await _loadCtaCte();
+      await _loadRetiros();
+      await _loadCajas();
+      await _loadConfig();
+      await _loadUsers();
+      await _loadDevoluciones();
+      await _loadCombos();
+      saveLocalData();
+      await syncOfflineQueue();
+    })(), 25000, 'cargar datos del sistema');
   } catch(e) {
     console.error('loadFromFirebase error:', e);
     toast('Error cargando. Usando datos locales.', 'warn');
