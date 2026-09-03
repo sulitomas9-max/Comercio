@@ -227,14 +227,18 @@ function initFirebase() {
  */
 function waitForFirebase(callback, tries = 0) {
   if (typeof firebase === 'undefined' || !initFirebase()) {
-    if (tries === 30) {
-      // A los ~6s sin conexión: si hay datos guardados en este dispositivo
+    if (tries === 34) {
+      // A los ~10s sin conexión: si hay datos guardados en este dispositivo
       // los usamos para no dejar a la persona colgada, pero seguimos
       // intentando conectar de fondo (más espaciado) — antes, cuando no
       // había caché local, se dejaba de intentar para siempre y hacía
-      // falta recargar la página a mano apenas volvía la señal.
+      // falta recargar la página a mano apenas volvía la señal. Antes se
+      // avisaba a los ~6s: muy poco para 4G/5G con señal débil, donde el
+      // celular puede tardar más en levantar el SDK de Firebase sin que
+      // eso signifique que la conexión esté realmente caída.
       const hasLocal = loadLocalData();
       if (hasLocal) {
+        store._offlineFallbackShown = true;
         toast('Sin conexión. Usando datos guardados localmente.', 'warn');
         updateConnBadge();
         callback();
@@ -265,7 +269,11 @@ function _ensureAuth(callback) {
     callback();
     return;
   }
-  withTimeout(auth.signInAnonymously(), 10000, 'autenticación anónima')
+  // 15s en vez de 10s: en conexiones móviles (4G/5G con señal débil) la
+  // autenticación anónima puede tardar más de 10s sin que la conexión esté
+  // realmente caída, y con el límite viejo eso se mostraba como "sin
+  // conexión" antes de tiempo.
+  withTimeout(auth.signInAnonymously(), 15000, 'autenticación anónima')
     .then(() => {
       callback();
     })
@@ -274,6 +282,7 @@ function _ensureAuth(callback) {
       // Si falla la auth (ej. sin internet), intentar con caché local
       const hasLocal = loadLocalData();
       if (hasLocal) {
+        store._offlineFallbackShown = true;
         toast('Sin conexión. Usando datos guardados localmente.', 'warn');
         updateConnBadge();
         callback();
@@ -356,6 +365,7 @@ async function loadFromFirebase() {
   if (!db || !navigator.onLine) {
     const hasLocal = loadLocalData();
     if (hasLocal) {
+      store._offlineFallbackShown = true;
       showLoadingOverlay(false);
       updateConnBadge();
       toast('Sin conexión · Usando datos locales', 'warn');
@@ -367,6 +377,7 @@ async function loadFromFirebase() {
   }
 
   showLoadingOverlay(true);
+  let loadedFresh = false;
   try {
     // Las ~11 colecciones son independientes entre sí (cada una llena su
     // propia parte de "store" y ninguna necesita el resultado de otra), así
@@ -398,6 +409,7 @@ async function loadFromFirebase() {
       saveLocalData();
       await syncOfflineQueue();
     })(), 25000, 'cargar datos del sistema');
+    loadedFresh = true;
   } catch(e) {
     console.error('loadFromFirebase error:', e);
     toast('Error cargando. Usando datos locales.', 'warn');
@@ -406,6 +418,15 @@ async function loadFromFirebase() {
 
   showLoadingOverlay(false);
   updateConnBadge();
+  // Si veníamos mostrando el aviso de "sin conexión, usando datos locales"
+  // (SDK de Firebase tardando en levantar o autenticación anónima
+  // demorada) y ahora sí se pudo traer todo de Firebase, avisamos que ya
+  // está al día — así no queda la duda de si se reconectó de verdad o
+  // se sigue viendo información vieja.
+  if (loadedFresh && store._offlineFallbackShown) {
+    store._offlineFallbackShown = false;
+    toast('Reconectado. Datos actualizados.', 'ok');
+  }
 }
 
 async function _loadProducts() {
