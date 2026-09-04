@@ -361,6 +361,28 @@ async function loadUsersFromFirebase() {
 
 // ===== CARGA INICIAL (post-login BazarHub) =====
 
+// Ejecuta un _load*() con un límite de tiempo por intento y un reintento
+// si falla (timeout o error real de Firestore). Pensado para que un
+// tropiezo puntual de UNA colección (más probable en 4G/5G con señal
+// débil, al pedir las 12 a la vez) no tire abajo toda la carga: ver el
+// comentario grande en loadFromFirebase().
+async function _loadCollectionWithRetry(loadFn, label, attempts = 2) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await withTimeout(loadFn(), 10000, label);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1) {
+        await new Promise(r => setTimeout(r, 600));
+      }
+    }
+  }
+  console.error(`[BazarHub] "${label}" falló tras ${attempts} intentos:`, lastErr);
+  throw lastErr;
+}
+
 async function loadFromFirebase() {
   if (!db || !navigator.onLine) {
     const hasLocal = loadLocalData();
@@ -387,27 +409,56 @@ async function loadFromFirebase() {
     // esperas seguidas), y eso solo -sin ningún problema de conexión- ya
     // tardaba muchos segundos. Pedirlas en paralelo hace que el tiempo
     // total sea el de la colección más lenta, no la suma de todas.
-    // Además sigue protegido con un único límite de tiempo: si Firestore
-    // se cuelga en cualquiera (conexión mala, algún problema puntual del
-    // SDK, etc.), a los 25s se corta y se usan los datos guardados
-    // localmente en vez de quedarse en "Cargando datos..." para siempre.
+    //
+    // OJO con Promise.all "a secas" acá: si UNA sola de las 12 fallaba
+    // (por ej. un timeout puntual de esa colección en particular, con el
+    // resto respondiendo bien), Promise.all se rechazaba entera y el catch
+    // de más abajo tiraba TODO lo ya cargado a la basura para volver a los
+    // datos guardados en el celular -aunque 11 de las 12 colecciones ya
+    // hubiesen llegado bien-. En una conexión de por sí floja (4G/5G con
+    // señal débil), pedir 12 cosas a la vez hace más probable que alguna
+    // puntual se caiga, así que este "todo o nada" terminaba mostrando
+    // "Error cargando. Usando datos locales." muy seguido incluso cuando
+    // la carga real casi había terminado bien. Ahora cada colección tiene
+    // su propio reintento (si falla, se prueba una vez más) y se usa
+    // Promise.allSettled en vez de Promise.all: una colección que sigue
+    // fallando después del reintento no tira abajo a las demás, que ya
+    // quedaron cargadas y actualizadas en "store".
+    //
+    // Sigue protegido además con un único límite de tiempo total: si
+    // Firestore se cuelga de verdad (conexión realmente caída, problema
+    // general del servicio, etc.), a los 25s se corta todo y se usan los
+    // datos guardados localmente en vez de quedarse en "Cargando datos..."
+    // para siempre.
     await withTimeout((async () => {
-      await Promise.all([
-        _loadProducts(),
-        _loadProveedores(),
-        _loadSales(),
-        _loadOrders(),
-        _loadMovimientos(),
-        _loadCtaCte(),
-        _loadRetiros(),
-        _loadCajas(),
-        _loadConfig(),
-        _loadUsers(),
-        _loadDevoluciones(),
-        _loadCombos(),
-      ]);
+      const tasks = [
+        ['productos', _loadProducts],
+        ['proveedores', _loadProveedores],
+        ['ventas', _loadSales],
+        ['pedidos', _loadOrders],
+        ['movimientos', _loadMovimientos],
+        ['cuenta corriente', _loadCtaCte],
+        ['retiros', _loadRetiros],
+        ['cajas', _loadCajas],
+        ['configuración', _loadConfig],
+        ['usuarios', _loadUsers],
+        ['devoluciones', _loadDevoluciones],
+        ['combos', _loadCombos],
+      ];
+      const results = await Promise.allSettled(
+        tasks.map(([label, fn]) => _loadCollectionWithRetry(fn, label))
+      );
       saveLocalData();
       await syncOfflineQueue();
+
+      const failed = results
+        .map((r, i) => ({ ok: r.status === 'fulfilled', label: tasks[i][0] }))
+        .filter(x => !x.ok)
+        .map(x => x.label);
+      if (failed.length) {
+        console.error('[BazarHub] No se pudieron actualizar estas colecciones (se reintentó y siguió fallando):', failed);
+        toast(`No se pudo actualizar: ${failed.join(', ')}. El resto de los datos sí está al día.`, 'warn');
+      }
     })(), 25000, 'cargar datos del sistema');
     loadedFresh = true;
   } catch(e) {
