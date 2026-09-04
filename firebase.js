@@ -161,9 +161,9 @@ async function syncOfflineQueue() {
   for (const op of queue) {
     try {
       if (op.type === 'set') {
-        await db.collection(op.col).doc(String(op.id)).set(op.data);
+        await withTimeout(db.collection(op.col).doc(String(op.id)).set(op.data), 10000, 'sincronizar ' + op.col);
       } else if (op.type === 'delete') {
-        await db.collection(op.col).doc(String(op.id)).delete();
+        await withTimeout(db.collection(op.col).doc(String(op.id)).delete(), 10000, 'sincronizar ' + op.col);
       } else if (op.type === 'batch') {
         const batch = db.batch();
         for (const item of op.items) {
@@ -172,7 +172,7 @@ async function syncOfflineQueue() {
           else if (item.type === 'delete')
             batch.delete(db.collection(item.col).doc(String(item.id)));
         }
-        await batch.commit();
+        await withTimeout(batch.commit(), 10000, 'sincronizar cambios pendientes');
       }
     } catch(e) {
       console.error('Sync error:', op, e);
@@ -302,7 +302,7 @@ async function saveDoc(col, id, data) {
     return;
   }
   try {
-    await db.collection(col).doc(String(id)).set(data);
+    await withTimeout(db.collection(col).doc(String(id)).set(data), 10000, 'guardar ' + col);
   } catch(e) {
     console.error('saveDoc error:', col, id, e);
     addToOfflineQueue({ type: 'set', col, id: String(id), data });
@@ -316,7 +316,7 @@ async function deleteDoc(col, id) {
     return;
   }
   try {
-    await db.collection(col).doc(String(id)).delete();
+    await withTimeout(db.collection(col).doc(String(id)).delete(), 10000, 'eliminar ' + col);
   } catch(e) {
     console.error('deleteDoc error:', col, id, e);
     addToOfflineQueue({ type: 'delete', col, id: String(id) });
@@ -621,7 +621,7 @@ async function saveSale(sale, updatedProducts, newMovimientos) {
     batch.set(db.collection('sales').doc(String(sale.id)), sale);
     updatedProducts.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
     newMovimientos.forEach(m => batch.set(db.collection('movimientos').doc(String(m.id)), m));
-    await batch.commit();
+    await withTimeout(batch.commit(), 10000, 'guardar venta');
     saveLocalData();
   } catch(e) {
     console.error('saveSale error:', e);
@@ -653,7 +653,7 @@ async function removeProveedor(id, affectedProducts) {
     const batch = db.batch();
     batch.delete(db.collection('proveedores').doc(String(id)));
     affectedProducts.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
-    await batch.commit();
+    await withTimeout(batch.commit(), 10000, 'eliminar proveedor');
   } catch(e) {
     addToOfflineQueue({ type: 'batch', items: [
       { type: 'delete', col: 'proveedores', id: String(id) },
@@ -682,7 +682,7 @@ async function updateOrder(order, updatedProducts, newMovimientos) {
     batch.set(db.collection('orders').doc(String(order.id)), order);
     updatedProducts.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
     newMovimientos.forEach(m => batch.set(db.collection('movimientos').doc(String(m.id)), m));
-    await batch.commit();
+    await withTimeout(batch.commit(), 10000, 'guardar pedido');
   } catch(e) {
     addToOfflineQueue({ type: 'batch', items: [
       { type: 'set', col: 'orders', id: String(order.id), data: order },
