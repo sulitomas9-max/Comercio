@@ -14,7 +14,8 @@ function calcVentasEfCaja() {
   if (!store.cajaAbierta) return 0;
   return store.sales
     .filter(s => s.cajaId === store.cajaAbierta.id)
-    .reduce((s, v) => s + montoPorMetodo(v, 'cash'), 0);
+    .reduce((s, v) => s + montoPorMetodo(v, 'cash'), 0)
+    + calcCambiosMetodoPorCajaId(store.cajaAbierta.id, 'cash');
 }
 
 // Suma de ventas de la caja actualmente abierta para un método dado
@@ -25,7 +26,8 @@ function calcVentasMetodoCaja(method) {
   if (!store.cajaAbierta) return 0;
   return store.sales
     .filter(s => s.cajaId === store.cajaAbierta.id)
-    .reduce((s, v) => s + montoPorMetodo(v, method), 0);
+    .reduce((s, v) => s + montoPorMetodo(v, method), 0)
+    + calcCambiosMetodoPorCajaId(store.cajaAbierta.id, method);
 }
 
 // Suma de ventas por método para CUALQUIER caja (abierta o del historial),
@@ -36,7 +38,21 @@ function calcVentasMetodoCaja(method) {
 function calcVentasMetodoPorCajaId(cajaId, method) {
   return store.sales
     .filter(s => s.cajaId === cajaId)
-    .reduce((s, v) => s + montoPorMetodo(v, method), 0);
+    .reduce((s, v) => s + montoPorMetodo(v, method), 0)
+    + calcCambiosMetodoPorCajaId(cajaId, method);
+}
+
+// Suma de las diferencias de precio de los "cambios" (devolución + entrega
+// de otro producto, ver openCambioModal) cobradas/devueltas por un método
+// dado, para una caja puntual. Un cambio con diferencia positiva (el
+// cliente paga de más) suma; uno con diferencia negativa (se le devuelve
+// plata al cliente) resta — así calcSaldoCaja/calcVentasEfCaja reflejan el
+// movimiento real de efectivo sin necesidad de inventar una "venta" o un
+// "retiro" aparte para cada cambio.
+function calcCambiosMetodoPorCajaId(cajaId, method) {
+  return (store.devoluciones || [])
+    .filter(d => d.type === 'cambio' && d.cajaId === cajaId && d.metodoPago === method)
+    .reduce((s, d) => s + (d.diferencia || 0), 0);
 }
 
 function calcRetirosCaja() {
@@ -68,6 +84,7 @@ function updateCajaBar() {
 
     document.getElementById('caja-actions').innerHTML = `
       <button class="btn warn-btn sm" onclick="openRetiro()">Retiro</button>
+      <button class="btn sm" onclick="openCambioModal()">🔁 Cambio</button>
       <button class="btn red sm" onclick="openCerrarCaja()">Cerrar caja</button>`;
 
     strip.style.display = 'flex';
@@ -278,6 +295,243 @@ async function saveRetiro() {
   closeModal('modal-retiro');
   updateCajaBar();
   toast('Retiro registrado: ' + formatMoney(monto));
+}
+
+// ===== CAMBIO (devolución + entrega de otro producto) =====
+// Pensado para que la cajera lo resuelva en el momento, en el mostrador, sin
+// tener que buscar primero la venta original: el cliente trae un producto,
+// se lleva otro distinto, y acá se calcula la diferencia de precio (a favor
+// o en contra) y se ajusta el stock de ambos productos. Se guarda como un
+// registro más en "devoluciones" (con type:'cambio') para reutilizar toda
+// la infraestructura ya existente de esa colección (carga, guardado local,
+// historial), en vez de crear una colección nueva.
+
+function openCambioModal() {
+  if (!store.cajaAbierta) { toast('Abrí la caja primero', 'err'); return; }
+  store.cambioDevueltos = [];
+  store.cambioNuevos    = [];
+  store._cambioPay      = 'cash';
+  const searchDev    = document.getElementById('cambio-search-dev');
+  const searchNuevo  = document.getElementById('cambio-search-nuevo');
+  const resultsDev   = document.getElementById('cambio-results-dev');
+  const resultsNuevo = document.getElementById('cambio-results-nuevo');
+  const motivo       = document.getElementById('cambio-motivo');
+  if (searchDev)    searchDev.value = '';
+  if (searchNuevo)  searchNuevo.value = '';
+  if (resultsDev)   resultsDev.style.display = 'none';
+  if (resultsNuevo) resultsNuevo.style.display = 'none';
+  if (motivo)       motivo.value = '';
+  setCambioPay('cash');
+  renderCambioListas();
+  openModal('modal-cambio');
+}
+
+function filterCambioProds(tipo) {
+  const inputId = tipo === 'dev' ? 'cambio-search-dev' : 'cambio-search-nuevo';
+  const resId   = tipo === 'dev' ? 'cambio-results-dev' : 'cambio-results-nuevo';
+  const q   = document.getElementById(inputId).value.toLowerCase().trim();
+  const res = document.getElementById(resId);
+  if (!q) { res.style.display = 'none'; res.innerHTML = ''; return; }
+
+  const found = store.products.filter(p =>
+    p.name.toLowerCase().includes(q) || (p.code || '').includes(q)
+  ).slice(0, 20);
+
+  if (!found.length) { res.style.display = 'none'; res.innerHTML = ''; return; }
+
+  res.style.display = 'block';
+  res.innerHTML = found.map(p => `
+    <div class="sr-item" onclick="addCambioItem('${tipo}', ${p.id})">
+      <div>
+        <div class="sr-name">${p.name}</div>
+        <div class="sr-meta">Stock: ${esStockInfinito(p) ? '∞' : p.stock} · ${p.code || 'Sin código'}</div>
+      </div>
+      <div class="sr-price">${formatMoney(p.price)}</div>
+    </div>`).join('');
+}
+
+function addCambioItem(tipo, prodId) {
+  const prod = store.products.find(p => p.id === prodId);
+  if (!prod) return;
+  const lista = tipo === 'dev' ? store.cambioDevueltos : store.cambioNuevos;
+
+  if (tipo === 'nuevo') {
+    const infinito   = esStockInfinito(prod);
+    const yaEnLista  = lista.find(i => i.id === prodId);
+    const qtyActual  = yaEnLista ? yaEnLista.qty : 0;
+    if (!infinito && prod.stock <= qtyActual) { toast('Sin stock disponible', 'err'); return; }
+  }
+
+  const existing = lista.find(i => i.id === prodId);
+  if (existing) existing.qty++;
+  else lista.push({ id: prod.id, name: prod.name, price: prod.price, qty: 1 });
+
+  const inputId = tipo === 'dev' ? 'cambio-search-dev' : 'cambio-search-nuevo';
+  const resId   = tipo === 'dev' ? 'cambio-results-dev' : 'cambio-results-nuevo';
+  document.getElementById(inputId).value = '';
+  document.getElementById(resId).style.display = 'none';
+
+  renderCambioListas();
+}
+
+function changeCambioQty(tipo, prodId, delta) {
+  const lista = tipo === 'dev' ? store.cambioDevueltos : store.cambioNuevos;
+  const item  = lista.find(i => i.id === prodId);
+  if (!item) return;
+  if (tipo === 'nuevo' && delta > 0) {
+    const prod = store.products.find(p => p.id === prodId);
+    if (prod && !esStockInfinito(prod) && item.qty >= prod.stock) { toast('Sin stock disponible', 'err'); return; }
+  }
+  item.qty += delta;
+  if (item.qty <= 0) lista.splice(lista.indexOf(item), 1);
+  renderCambioListas();
+}
+
+function removeCambioItem(tipo, prodId) {
+  const lista = tipo === 'dev' ? store.cambioDevueltos : store.cambioNuevos;
+  const idx = lista.findIndex(i => i.id === prodId);
+  if (idx >= 0) lista.splice(idx, 1);
+  renderCambioListas();
+}
+
+function renderCambioLista(tipo) {
+  const lista   = tipo === 'dev' ? (store.cambioDevueltos || []) : (store.cambioNuevos || []);
+  const listEl  = document.getElementById(tipo === 'dev' ? 'cambio-list-dev' : 'cambio-list-nuevo');
+  const totalEl = document.getElementById(tipo === 'dev' ? 'cambio-total-dev' : 'cambio-total-nuevo');
+  if (listEl) {
+    listEl.innerHTML = lista.map(i => `
+      <div class="ci">
+        <div class="ci-name">${i.name}<div class="ci-name-sub">${formatMoney(i.price)} c/u</div></div>
+        <div class="ci-qty">
+          <button class="qbtn" onclick="changeCambioQty('${tipo}', ${i.id}, -1)">−</button>
+          <span style="min-width:24px;text-align:center;font-weight:700">${i.qty}</span>
+          <button class="qbtn" onclick="changeCambioQty('${tipo}', ${i.id}, 1)">+</button>
+        </div>
+        <div class="ci-price">${formatMoney(i.price * i.qty)}</div>
+        <div class="ci-del">
+          <button class="qbtn" onclick="removeCambioItem('${tipo}', ${i.id})" style="color:var(--red);border-color:var(--red-l)">✕</button>
+        </div>
+      </div>`).join('');
+  }
+  const total = lista.reduce((s, i) => s + i.price * i.qty, 0);
+  if (totalEl) totalEl.textContent = formatMoney(total);
+  return total;
+}
+
+function renderCambioListas() {
+  const totalDev   = renderCambioLista('dev');
+  const totalNuevo = renderCambioLista('nuevo');
+  const dif = totalNuevo - totalDev;
+
+  const difLabelEl = document.getElementById('cambio-dif-label');
+  const difEl      = document.getElementById('cambio-dif');
+  const payWrap     = document.getElementById('cambio-pago-wrap');
+  if (!difLabelEl || !difEl || !payWrap) return;
+
+  if (dif > 0) {
+    difLabelEl.textContent = 'El cliente paga la diferencia';
+    difEl.textContent = formatMoney(dif);
+    difEl.style.color = 'var(--accent)';
+  } else if (dif < 0) {
+    difLabelEl.textContent = 'Diferencia a favor del cliente';
+    difEl.textContent = formatMoney(Math.abs(dif));
+    difEl.style.color = 'var(--red)';
+  } else {
+    difLabelEl.textContent = 'Diferencia';
+    difEl.textContent = formatMoney(0);
+    difEl.style.color = 'var(--txt2)';
+  }
+  payWrap.style.display = dif !== 0 ? 'block' : 'none';
+}
+
+function setCambioPay(method) {
+  store._cambioPay = method;
+  ['cash', 'card', 'transfer'].forEach(m => {
+    const el = document.getElementById('cpm-' + m);
+    if (el) el.classList.toggle('sel', m === method);
+  });
+}
+
+async function confirmarCambio() {
+  if (!store.cajaAbierta) { toast('Abrí la caja primero', 'err'); return; }
+  const devueltos = store.cambioDevueltos || [];
+  const nuevos    = store.cambioNuevos    || [];
+  if (!devueltos.length) { showMsg('msg-cambio', 'Agregá el producto que devuelve el cliente', 'err'); return; }
+  if (!nuevos.length)    { showMsg('msg-cambio', 'Agregá el producto que se lleva', 'err'); return; }
+
+  // Revalida el stock de los productos nuevos justo antes de confirmar (por
+  // si cambió mientras la cajera armaba el cambio, ej. otra venta en
+  // simultáneo desde otro dispositivo).
+  for (const item of nuevos) {
+    const prod = store.products.find(p => p.id === item.id);
+    if (!prod) { showMsg('msg-cambio', `Producto no encontrado: ${item.name}`, 'err'); return; }
+    if (!esStockInfinito(prod) && prod.stock < item.qty) {
+      showMsg('msg-cambio', `Stock insuficiente de "${item.name}" (disponible: ${prod.stock})`, 'err');
+      return;
+    }
+  }
+
+  initDevolucionesStore();
+  const totalDev    = devueltos.reduce((s, i) => s + i.price * i.qty, 0);
+  const totalNuevo  = nuevos.reduce((s, i) => s + i.price * i.qty, 0);
+  const diferencia  = totalNuevo - totalDev;
+  const motivo      = (document.getElementById('cambio-motivo')?.value || '').trim() || 'Cambio de producto';
+
+  const updatedProducts = [];
+  const newMovimientos  = [];
+
+  devueltos.forEach(item => {
+    const prod = store.products.find(p => p.id === item.id);
+    if (prod) {
+      const prev = prod.stock;
+      if (!esStockInfinito(prod)) prod.stock += item.qty;
+      const mov = registrarMovimiento(prod.id, 'devolucion', item.qty, prev, prod.stock, `Cambio - devuelve (${motivo})`);
+      updatedProducts.push(prod);
+      newMovimientos.push(mov);
+    }
+  });
+
+  nuevos.forEach(item => {
+    const prod = store.products.find(p => p.id === item.id);
+    if (prod) {
+      const prev = prod.stock;
+      if (!esStockInfinito(prod)) prod.stock -= item.qty;
+      prod.sold    += item.qty;
+      prod.revenue += item.price * item.qty;
+      const mov = registrarMovimiento(prod.id, 'venta', -item.qty, prev, prod.stock, `Cambio - entrega (${motivo})`);
+      updatedProducts.push(prod);
+      newMovimientos.push(mov);
+    }
+  });
+
+  const cambio = {
+    id: store.nextDevId++, type: 'cambio', saleId: null,
+    items: devueltos, itemsNuevos: nuevos,
+    total: totalDev, totalNuevo, diferencia,
+    metodoPago: diferencia !== 0 ? store._cambioPay : null,
+    motivo, cajaId: store.cajaAbierta.id,
+    userId: store.currentUser.id, userName: store.currentUser.name,
+    fecha: new Date().toLocaleString('es-AR'),
+  };
+  store.devoluciones.push(cambio);
+
+  try {
+    const batch = db.batch();
+    batch.set(db.collection('devoluciones').doc(String(cambio.id)), cambio);
+    updatedProducts.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
+    newMovimientos.forEach(m => batch.set(db.collection('movimientos').doc(String(m.id)), m));
+    await batch.commit();
+    closeModal('modal-cambio');
+    toast('Cambio registrado' + (diferencia !== 0
+      ? `: ${formatMoney(Math.abs(diferencia))} ${diferencia > 0 ? 'a cobrar' : 'a favor del cliente'}`
+      : ''));
+    updateCajaBar();
+    renderStockPage();
+    renderHistory();
+  } catch (e) {
+    console.error(e);
+    showMsg('msg-cambio', 'Error guardando el cambio', 'err');
+  }
 }
 
 // ===== PRESENTACIONES =====
@@ -1245,13 +1499,28 @@ function _renderHistorialDevoluciones() {
   const devs = store.devoluciones || [];
   if (!devs.length) { tb.innerHTML = ''; em.style.display = 'block'; return; }
   em.style.display = 'none';
-  tb.innerHTML = [...devs].reverse().map(d => `
+  tb.innerHTML = [...devs].reverse().map(d => {
+    if (d.type === 'cambio') {
+      const dif = d.diferencia || 0;
+      const difTxt = dif > 0 ? `Cobrado: ${formatMoney(dif)}`
+        : dif < 0 ? `A favor cliente: ${formatMoney(Math.abs(dif))}`
+        : 'Sin diferencia';
+      return `
+        <tr>
+          <td>${d.fecha}</td><td>—</td>
+          <td><span class="badge warn">Cambio</span></td>
+          <td>Devuelve: ${d.items.map(i => `${i.name} ×${i.qty}`).join(', ')}<br>Lleva: ${(d.itemsNuevos || []).map(i => `${i.name} ×${i.qty}`).join(', ')}</td>
+          <td>${difTxt}</td><td>${d.motivo}</td><td>${d.userName}</td>
+        </tr>`;
+    }
+    return `
     <tr>
       <td>${d.fecha}</td><td>#${d.saleId}</td>
       <td><span class="badge ${d.type === 'anulacion' ? 'out' : 'warn'}">${d.type === 'anulacion' ? 'Anulación' : 'Parcial'}</span></td>
       <td>${d.items.map(i => `${i.name} ×${i.qty}`).join(', ')}</td>
       <td>${formatMoney(d.total)}</td><td>${d.motivo}</td><td>${d.userName}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 // Arma una etiqueta legible para identificar a qué caja (turno) pertenece
