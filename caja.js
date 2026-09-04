@@ -515,22 +515,45 @@ async function confirmarCambio() {
   };
   store.devoluciones.push(cambio);
 
+  const batchItems = [
+    { type: 'set', col: 'devoluciones', id: String(cambio.id), data: cambio },
+    ...updatedProducts.map(p => ({ type: 'set', col: 'products',   id: String(p.id), data: p })),
+    ...newMovimientos.map(m => ({ type: 'set', col: 'movimientos', id: String(m.id), data: m })),
+  ];
+
+  const okMsg = 'Cambio registrado' + (diferencia !== 0
+    ? `: ${formatMoney(Math.abs(diferencia))} ${diferencia > 0 ? 'a cobrar' : 'a favor del cliente'}`
+    : '');
+
+  if (!navigator.onLine || !db) {
+    addToOfflineQueue({ type: 'batch', items: batchItems });
+    closeModal('modal-cambio');
+    toast(okMsg + ' (se sincronizará al reconectar)', 'warn');
+    updateCajaBar();
+    renderStockPage();
+    renderHistory();
+    return;
+  }
+
   try {
     const batch = db.batch();
     batch.set(db.collection('devoluciones').doc(String(cambio.id)), cambio);
     updatedProducts.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
     newMovimientos.forEach(m => batch.set(db.collection('movimientos').doc(String(m.id)), m));
-    await batch.commit();
+    await withTimeout(batch.commit(), 10000, 'guardar cambio');
     closeModal('modal-cambio');
-    toast('Cambio registrado' + (diferencia !== 0
-      ? `: ${formatMoney(Math.abs(diferencia))} ${diferencia > 0 ? 'a cobrar' : 'a favor del cliente'}`
-      : ''));
+    toast(okMsg);
     updateCajaBar();
     renderStockPage();
     renderHistory();
   } catch (e) {
     console.error(e);
-    showMsg('msg-cambio', 'Error guardando el cambio', 'err');
+    addToOfflineQueue({ type: 'batch', items: batchItems });
+    closeModal('modal-cambio');
+    toast(okMsg + ' (se sincronizará al reconectar)', 'warn');
+    updateCajaBar();
+    renderStockPage();
+    renderHistory();
   }
 }
 
