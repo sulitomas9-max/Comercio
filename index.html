@@ -613,6 +613,54 @@
     </div>
   </div>
 </div>
+<div class="modal-bg" id="modal-cambio">
+  <div class="modal wide">
+    <div class="modal-title">Cambio de producto</div>
+    <div id="msg-cambio" class="msg"></div>
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--txt2);margin:4px 0 8px">Producto que devuelve el cliente</div>
+    <div class="search-wrap">
+      <input id="cambio-search-dev" placeholder="🔍 Buscar producto por nombre o código..." oninput="filterCambioProds('dev')" autocomplete="off">
+      <div class="search-results" id="cambio-results-dev"></div>
+    </div>
+    <div id="cambio-list-dev" style="margin-top:6px"></div>
+    <div class="total-line" style="margin-top:4px">
+      <span style="font-size:12px;color:var(--txt2)">Total devuelto</span>
+      <span id="cambio-total-dev" style="font-weight:600">$0</span>
+    </div>
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--txt2);margin:16px 0 8px">Producto que se lleva</div>
+    <div class="search-wrap">
+      <input id="cambio-search-nuevo" placeholder="🔍 Buscar producto por nombre o código..." oninput="filterCambioProds('nuevo')" autocomplete="off">
+      <div class="search-results" id="cambio-results-nuevo"></div>
+    </div>
+    <div id="cambio-list-nuevo" style="margin-top:6px"></div>
+    <div class="total-line" style="margin-top:4px">
+      <span style="font-size:12px;color:var(--txt2)">Total nuevo</span>
+      <span id="cambio-total-nuevo" style="font-weight:600">$0</span>
+    </div>
+
+    <div class="total-line" style="border-top:1px solid var(--brd);padding-top:10px;font-weight:700;font-size:15px;margin-top:12px">
+      <span id="cambio-dif-label">Diferencia</span><span id="cambio-dif" style="color:var(--accent)">$0</span>
+    </div>
+
+    <div id="cambio-pago-wrap" style="display:none;margin-top:10px">
+      <div class="sec-title" style="margin-bottom:6px">Método de pago de la diferencia</div>
+      <div class="pay-methods">
+        <div class="pm sel" id="cpm-cash" onclick="setCambioPay('cash')"><span class="pm-ico">💵</span>Efectivo</div>
+        <div class="pm" id="cpm-card" onclick="setCambioPay('card')"><span class="pm-ico">💳</span>Tarjeta</div>
+        <div class="pm" id="cpm-transfer" onclick="setCambioPay('transfer')"><span class="pm-ico">🏦</span>Transferencia</div>
+      </div>
+    </div>
+
+    <div class="mfl" style="margin-top:12px"><label>Motivo / observación (opcional)</label><input id="cambio-motivo" placeholder="Talle, color, modelo..."></div>
+
+    <div class="macts">
+      <button class="btn" onclick="closeModal('modal-cambio')">Cancelar</button>
+      <button class="btn pri" onclick="confirmarCambio()">Confirmar cambio</button>
+    </div>
+  </div>
+</div>
 <div class="modal-bg" id="modal-abrir-caja">
   <div class="modal">
     <div class="modal-title">Abrir caja</div>
@@ -844,7 +892,7 @@
 <script src="config.js?v=5"></script>
 <script src="firebase.js?v=12"></script>
 <script src="app.js?v=8"></script>
-<script src="caja.js?v=11"></script>
+<script src="caja.js?v=12"></script>
 <script src="stock.js?v=6"></script>
 <script src="dashboard.js?v=6"></script>
 <script src="importar.js?v=5"></script>
