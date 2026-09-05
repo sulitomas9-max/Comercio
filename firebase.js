@@ -402,34 +402,40 @@ async function loadFromFirebase() {
   let loadedFresh = false;
   try {
     // Las ~11 colecciones son independientes entre sí (cada una llena su
-    // propia parte de "store" y ninguna necesita el resultado de otra), así
-    // que se piden todas al mismo tiempo en vez de una atrás de la otra.
+    // propia parte de "store" y ninguna necesita el resultado de otra).
     // Antes, con miles de ventas/movimientos ya cargados, cada colección
     // sumaba su propio viaje de ida y vuelta a Firestore en fila (12
     // esperas seguidas), y eso solo -sin ningún problema de conexión- ya
-    // tardaba muchos segundos. Pedirlas en paralelo hace que el tiempo
-    // total sea el de la colección más lenta, no la suma de todas.
+    // tardaba muchos segundos.
     //
-    // OJO con Promise.all "a secas" acá: si UNA sola de las 12 fallaba
-    // (por ej. un timeout puntual de esa colección en particular, con el
-    // resto respondiendo bien), Promise.all se rechazaba entera y el catch
-    // de más abajo tiraba TODO lo ya cargado a la basura para volver a los
-    // datos guardados en el celular -aunque 11 de las 12 colecciones ya
-    // hubiesen llegado bien-. En una conexión de por sí floja (4G/5G con
-    // señal débil), pedir 12 cosas a la vez hace más probable que alguna
-    // puntual se caiga, así que este "todo o nada" terminaba mostrando
-    // "Error cargando. Usando datos locales." muy seguido incluso cuando
-    // la carga real casi había terminado bien. Ahora cada colección tiene
-    // su propio reintento (si falla, se prueba una vez más) y se usa
-    // Promise.allSettled en vez de Promise.all: una colección que sigue
-    // fallando después del reintento no tira abajo a las demás, que ya
-    // quedaron cargadas y actualizadas en "store".
+    // Se probó pedir las 12 al mismo tiempo (paralelo total), pero en una
+    // conexión floja (4G/5G o wifi con señal débil) eso hace que las 12
+    // compitan por el mismo ancho de banda a la vez: ninguna llega a tiempo
+    // y varias timeoutean juntas (justo lo que mostraba el toast "No se
+    // pudo actualizar: proveedores, ventas, pedidos..."). Las únicas que
+    // solían salvarse eran las colecciones chicas (productos, usuarios),
+    // que por su tamaño responden rápido incluso compitiendo por ancho de
+    // banda con las demás.
+    //
+    // Ahora se piden en TANDAS de a BATCH_SIZE en paralelo (no las 12 juntas,
+    // pero tampoco una por una): cada tanda espera a que termine antes de
+    // arrancar la siguiente, así nunca hay más de BATCH_SIZE pedidos
+    // compitiendo por la conexión al mismo tiempo, pero se sigue
+    // aprovechando el paralelismo dentro de cada tanda.
+    //
+    // Cada colección sigue teniendo su propio reintento (si falla, se
+    // prueba una vez más) y se usa Promise.allSettled en vez de Promise.all:
+    // una colección que sigue fallando después del reintento no tira abajo
+    // a las demás, que ya quedaron cargadas y actualizadas en "store".
     //
     // Sigue protegido además con un único límite de tiempo total: si
     // Firestore se cuelga de verdad (conexión realmente caída, problema
-    // general del servicio, etc.), a los 25s se corta todo y se usan los
-    // datos guardados localmente en vez de quedarse en "Cargando datos..."
-    // para siempre.
+    // general del servicio, etc.), se corta todo y se usan los datos
+    // guardados localmente en vez de quedarse en "Cargando datos..." para
+    // siempre. Con tandas en vez de todo-junto, el peor caso tarda más
+    // (hasta 3 tandas en fila en vez de 1), así que el límite total también
+    // se subió de 25s a 45s para darle ese margen.
+    const BATCH_SIZE = 4;
     await withTimeout((async () => {
       const tasks = [
         ['productos', _loadProducts],
@@ -445,9 +451,16 @@ async function loadFromFirebase() {
         ['devoluciones', _loadDevoluciones],
         ['combos', _loadCombos],
       ];
-      const results = await Promise.allSettled(
-        tasks.map(([label, fn]) => _loadCollectionWithRetry(fn, label))
-      );
+
+      const results = [];
+      for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+        const batch = tasks.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.allSettled(
+          batch.map(([label, fn]) => _loadCollectionWithRetry(fn, label))
+        );
+        results.push(...batchResults);
+      }
+
       saveLocalData();
       await syncOfflineQueue();
 
@@ -459,7 +472,7 @@ async function loadFromFirebase() {
         console.error('[BazarHub] No se pudieron actualizar estas colecciones (se reintentó y siguió fallando):', failed);
         toast(`No se pudo actualizar: ${failed.join(', ')}. El resto de los datos sí está al día.`, 'warn');
       }
-    })(), 25000, 'cargar datos del sistema');
+    })(), 45000, 'cargar datos del sistema');
     loadedFresh = true;
   } catch(e) {
     console.error('loadFromFirebase error:', e);
