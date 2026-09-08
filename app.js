@@ -762,22 +762,48 @@ function setRankFilter(filter, el) {
   renderRanking();
 }
 
+function filterRankSearch(value) {
+  store.rankSearch = value;
+  renderRanking();
+}
+
+// Ranking completo: muestra TODOS los productos (no solo un top acotado),
+// con buscador por nombre/categoría/código y el % que representa cada uno
+// sobre el total, para que sea fácil ubicar cualquier artículo en una
+// lista larga sin perder el panorama general.
 function renderRanking() {
   const byQty = store.rankFilter === 'qty';
-  const sorted = [...store.products].sort((a, b) => byQty ? b.sold - a.sold : b.revenue - a.revenue);
-  const maxVal = Math.max(1, ...sorted.map(p => byQty ? p.sold : p.revenue));
+  const search = (store.rankSearch || '').trim().toLowerCase();
+
+  const ranked = [...store.products]
+    .sort((a, b) => byQty ? b.sold - a.sold : b.revenue - a.revenue)
+    .map((p, i) => ({ p, rank: i + 1 }));
+  const maxVal = Math.max(1, ...ranked.map(({ p }) => byQty ? p.sold : p.revenue));
+  const totalVal = ranked.reduce((s, { p }) => s + (byQty ? p.sold : p.revenue), 0) || 1;
+
+  const filtered = search
+    ? ranked.filter(({ p }) =>
+        p.name.toLowerCase().includes(search) ||
+        (p.cat || '').toLowerCase().includes(search) ||
+        (p.code || '').toLowerCase().includes(search))
+    : ranked;
 
   document.getElementById('rank-t1').textContent = byQty ? 'Top por cantidad vendida' : 'Top por ingresos';
-  document.getElementById('rank-list').innerHTML = sorted.slice(0, 7).map((p, i) => {
+  document.getElementById('rank-count').textContent = search
+    ? `Mostrando ${filtered.length} de ${ranked.length} productos`
+    : `${ranked.length} producto${ranked.length === 1 ? '' : 's'} en total`;
+
+  document.getElementById('rank-list').innerHTML = filtered.length ? filtered.map(({ p, rank }) => {
     const val = byQty ? p.sold : p.revenue;
+    const pct = Math.round(val / totalVal * 100);
     return `
       <div class="rank-row">
-        <div class="rank-n">${i + 1}</div>
+        <div class="rank-n">${rank}</div>
         <div class="rank-name" title="${p.name}">${p.name}</div>
         <div class="rank-bar"><div class="rank-fill" style="width:${Math.round(val / maxVal * 100)}%"></div></div>
-        <div class="rank-val">${byQty ? val + ' u.' : formatMoney(val)}</div>
+        <div class="rank-val">${byQty ? val + ' u.' : formatMoney(val)} <span class="rank-pct">(${pct}%)</span></div>
       </div>`;
-  }).join('');
+  }).join('') : '<div class="rank-empty">Ningún producto coincide con la búsqueda</div>';
 
   const cats = {};
   store.products.forEach(p => {
@@ -789,15 +815,17 @@ function renderRanking() {
     byQty ? b[1].qty - a[1].qty : b[1].rev - a[1].rev
   );
   const maxCat = Math.max(1, ...catArr.map(([, d]) => byQty ? d.qty : d.rev));
+  const totalCat = catArr.reduce((s, [, d]) => s + (byQty ? d.qty : d.rev), 0) || 1;
 
   document.getElementById('cat-list').innerHTML = catArr.map(([name, d], i) => {
     const val = byQty ? d.qty : d.rev;
+    const pct = Math.round(val / totalCat * 100);
     return `
       <div class="rank-row">
         <div class="rank-n">${i + 1}</div>
         <div class="rank-name">${name}</div>
         <div class="rank-bar"><div class="rank-fill" style="width:${Math.round(val / maxCat * 100)}%;background:var(--blue)"></div></div>
-        <div class="rank-val">${byQty ? val + ' u.' : formatMoney(val)}</div>
+        <div class="rank-val">${byQty ? val + ' u.' : formatMoney(val)} <span class="rank-pct">(${pct}%)</span></div>
       </div>`;
   }).join('');
 }
