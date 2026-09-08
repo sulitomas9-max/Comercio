@@ -783,7 +783,10 @@ tr:hover td { background: var(--bg3); }
 .rank-name { font-size: 13px; width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rank-bar { background: var(--bg3); border-radius: 4px; height: 9px; overflow: hidden; flex: 1; }
 .rank-fill { height: 100%; border-radius: 4px; background: var(--accent); transition: width .6s; }
-.rank-val { font-size: 12px; color: var(--txt2); min-width: 50px; text-align: right; font-weight: 600; }
+.rank-val { font-size: 12px; color: var(--txt2); min-width: 78px; text-align: right; font-weight: 600; }
+.rank-pct { color: var(--txt3); font-weight: 400; }
+.rank-list-scroll { max-height: 480px; overflow-y: auto; padding-right: 4px; }
+.rank-empty { text-align: center; padding: 16px; color: var(--txt3); font-size: 13px; }
 
 /* ===== PROVEEDORES ===== */
 .prov-card {
