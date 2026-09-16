@@ -93,15 +93,9 @@ function renderMovimientos() {
   if (thAcc)    thAcc.textContent      = isAdmin ? 'Acciones' : '';
   if (btnNuevo) btnNuevo.style.display = isAdmin ? 'inline-block' : 'none';
 
-  const sel  = document.getElementById('mov-fprod');
-  const prev = sel.value;
-  sel.innerHTML = '<option value="">Todos los productos</option>' +
-    store.products.map(p => `<option value="${p.id}" ${prev == p.id ? 'selected' : ''}>${p.name}</option>`).join('');
-  sel.value = prev;
-
-  const fp       = sel.value;
+  const fp       = (document.getElementById('mov-fprod').value || '').trim().toLowerCase();
   const ft       = document.getElementById('mov-ftype').value;
-  const filtered = store.movimientos.filter(m => (!fp || m.prodId == fp) && (!ft || m.tipo === ft));
+  const filtered = store.movimientos.filter(m => (!fp || m.prodName.toLowerCase().includes(fp)) && (!ft || m.tipo === ft));
   const tb = document.getElementById('mov-table');
   const em = document.getElementById('mov-empty');
 
