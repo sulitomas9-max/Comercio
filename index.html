@@ -321,7 +321,7 @@
       <div class="page" id="page-movimientos">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <select id="mov-fprod" onchange="renderMovimientos()" style="font-size:13px"><option value="">Todos los productos</option></select>
+            <input id="mov-fprod" type="text" placeholder="🔍 Buscar producto..." oninput="renderMovimientos()" style="font-size:13px;min-width:180px">
             <select id="mov-ftype" onchange="renderMovimientos()" style="font-size:13px">
               <option value="">Todos los tipos</option>
               <option value="venta">Venta</option><option value="entrada">Entrada</option>
@@ -898,7 +898,7 @@
 <script src="firebase.js?v=14"></script>
 <script src="app.js?v=9"></script>
 <script src="caja.js?v=13"></script>
-<script src="stock.js?v=6"></script>
+<script src="stock.js?v=7"></script>
 <script src="dashboard.js?v=7"></script>
 <script src="importar.js?v=5"></script>
 <script src="gastos.js?v=2"></script>
