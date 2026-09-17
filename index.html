@@ -410,6 +410,13 @@
         <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center" id="rank-filters">
           <div class="chip sel" onclick="setRankFilter('qty', this)">Por cantidad</div>
           <div class="chip" onclick="setRankFilter('revenue', this)">Por ingresos</div>
+          <select id="rank-period" onchange="setRankPeriod(this.value)" style="font-size:13px">
+            <option value="all" selected>Todo el tiempo</option>
+            <option value="month">Por mes</option>
+            <option value="day">Por día</option>
+          </select>
+          <input id="rank-month" type="month" onchange="renderRanking()" style="font-size:13px;display:none">
+          <input id="rank-day" type="date" onchange="renderRanking()" style="font-size:13px;display:none">
           <input id="rank-search" placeholder="🔍 Buscar producto o categoría..." oninput="filterRankSearch(this.value)" style="margin-left:auto;flex:1;min-width:160px;max-width:260px">
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
@@ -896,7 +903,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="config.js?v=5"></script>
 <script src="firebase.js?v=14"></script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 <script src="caja.js?v=13"></script>
 <script src="stock.js?v=7"></script>
 <script src="dashboard.js?v=7"></script>
