@@ -767,19 +767,86 @@ function filterRankSearch(value) {
   renderRanking();
 }
 
+function setRankPeriod(period) {
+  store.rankPeriod = period;
+  const monthEl = document.getElementById('rank-month');
+  const dayEl   = document.getElementById('rank-day');
+  monthEl.style.display = period === 'month' ? 'inline-block' : 'none';
+  dayEl.style.display   = period === 'day' ? 'inline-block' : 'none';
+  if (period === 'month' && !monthEl.value) monthEl.value = new Date().toISOString().slice(0, 7);
+  if (period === 'day' && !dayEl.value) dayEl.value = new Date().toISOString().slice(0, 10);
+  renderRanking();
+}
+
+// Suma cantidad e ingresos por producto a partir de store.sales (no de los
+// contadores acumulados del producto) para poder filtrar por mes o por día.
+// Ignora ventas anuladas por completo. En combos, la parte de ingresos de
+// cada producto componente se calcula con su precio actual, igual criterio
+// que ya usa caja.js al sumar los contadores históricos del producto.
+function getRankPeriodTotals() {
+  const period = store.rankPeriod || 'all';
+  if (period === 'all') return null;
+  const periodValue = period === 'month'
+    ? document.getElementById('rank-month').value
+    : document.getElementById('rank-day').value;
+  const totals = new Map();
+  if (!periodValue) return totals;
+  const add = (id, qty, revenue) => {
+    const cur = totals.get(id) || { qty: 0, revenue: 0 };
+    cur.qty += qty; cur.revenue += revenue;
+    totals.set(id, cur);
+  };
+  (store.sales || []).forEach(sale => {
+    if (sale.anulada || !sale.ts) return;
+    const d  = new Date(sale.ts);
+    const ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    if (period === 'month' && ym !== periodValue) return;
+    if (period === 'day' && (ym + '-' + String(d.getDate()).padStart(2, '0')) !== periodValue) return;
+    (sale.items || []).forEach(item => {
+      if (item.isCombo) {
+        (item.comboItems || []).forEach(comp => {
+          const prod = store.products.find(p => p.id === comp.prodId);
+          const uds  = comp.qty * item.qty;
+          add(comp.prodId, uds, (prod ? prod.price : 0) * uds);
+        });
+      } else {
+        const uds = item.qty * (item.unidades || 1);
+        add(item.id, uds, item.price * item.qty);
+      }
+    });
+  });
+  return totals;
+}
+
+function formatRankMonthLabel(ym) {
+  if (!ym) return '';
+  const [y, m] = ym.split('-').map(Number);
+  const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  return (meses[m - 1] || '') + ' ' + y;
+}
+
+function formatRankDayLabel(ymd) {
+  if (!ymd) return '';
+  const [y, m, d] = ymd.split('-');
+  return `${d}/${m}/${y}`;
+}
+
 // Ranking completo: muestra TODOS los productos (no solo un top acotado),
-// con buscador por nombre/categoría/código y el % que representa cada uno
-// sobre el total, para que sea fácil ubicar cualquier artículo en una
-// lista larga sin perder el panorama general.
+// con buscador por nombre/categoría/código, el % que representa cada uno
+// sobre el total, y la posibilidad de acotar por período (todo/mes/día)
+// sin perder el panorama general.
 function renderRanking() {
-  const byQty = store.rankFilter === 'qty';
+  const byQty  = store.rankFilter === 'qty';
   const search = (store.rankSearch || '').trim().toLowerCase();
+  const periodTotals = getRankPeriodTotals();
+  const getQty = p => periodTotals ? (periodTotals.get(p.id)?.qty || 0) : p.sold;
+  const getRev = p => periodTotals ? (periodTotals.get(p.id)?.revenue || 0) : p.revenue;
 
   const ranked = [...store.products]
-    .sort((a, b) => byQty ? b.sold - a.sold : b.revenue - a.revenue)
+    .sort((a, b) => byQty ? getQty(b) - getQty(a) : getRev(b) - getRev(a))
     .map((p, i) => ({ p, rank: i + 1 }));
-  const maxVal = Math.max(1, ...ranked.map(({ p }) => byQty ? p.sold : p.revenue));
-  const totalVal = ranked.reduce((s, { p }) => s + (byQty ? p.sold : p.revenue), 0) || 1;
+  const maxVal   = Math.max(1, ...ranked.map(({ p }) => byQty ? getQty(p) : getRev(p)));
+  const totalVal = ranked.reduce((s, { p }) => s + (byQty ? getQty(p) : getRev(p)), 0) || 1;
 
   const filtered = search
     ? ranked.filter(({ p }) =>
@@ -788,13 +855,16 @@ function renderRanking() {
         (p.code || '').toLowerCase().includes(search))
     : ranked;
 
-  document.getElementById('rank-t1').textContent = byQty ? 'Top por cantidad vendida' : 'Top por ingresos';
+  const periodLabel = store.rankPeriod === 'month' ? ' · ' + formatRankMonthLabel(document.getElementById('rank-month').value)
+    : store.rankPeriod === 'day' ? ' · ' + formatRankDayLabel(document.getElementById('rank-day').value)
+    : '';
+  document.getElementById('rank-t1').textContent = (byQty ? 'Top por cantidad vendida' : 'Top por ingresos') + periodLabel;
   document.getElementById('rank-count').textContent = search
     ? `Mostrando ${filtered.length} de ${ranked.length} productos`
     : `${ranked.length} producto${ranked.length === 1 ? '' : 's'} en total`;
 
   document.getElementById('rank-list').innerHTML = filtered.length ? filtered.map(({ p, rank }) => {
-    const val = byQty ? p.sold : p.revenue;
+    const val = byQty ? getQty(p) : getRev(p);
     const pct = Math.round(val / totalVal * 100);
     return `
       <div class="rank-row">
@@ -808,13 +878,13 @@ function renderRanking() {
   const cats = {};
   store.products.forEach(p => {
     if (!cats[p.cat]) cats[p.cat] = { qty: 0, rev: 0 };
-    cats[p.cat].qty += p.sold;
-    cats[p.cat].rev += p.revenue;
+    cats[p.cat].qty += getQty(p);
+    cats[p.cat].rev += getRev(p);
   });
   const catArr = Object.entries(cats).sort((a, b) =>
     byQty ? b[1].qty - a[1].qty : b[1].rev - a[1].rev
   );
-  const maxCat = Math.max(1, ...catArr.map(([, d]) => byQty ? d.qty : d.rev));
+  const maxCat   = Math.max(1, ...catArr.map(([, d]) => byQty ? d.qty : d.rev));
   const totalCat = catArr.reduce((s, [, d]) => s + (byQty ? d.qty : d.rev), 0) || 1;
 
   document.getElementById('cat-list').innerHTML = catArr.map(([name, d], i) => {
