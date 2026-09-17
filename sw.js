@@ -14,7 +14,7 @@
  * pero bumpear la versión asegura una limpieza total de la caché vieja).
  */
 
-const CACHE_VERSION = 'bazarhub-shell-v12';
+const CACHE_VERSION = 'bazarhub-shell-v13';
 
 // Archivos propios del sitio (mismo origen) + librerías externas, con las
 // mismas versiones/URLs exactas que usa index.html hoy.
@@ -24,7 +24,7 @@ const CORE_ASSETS = [
   './styles.css',
   './config.js?v=5',
   './firebase.js?v=14',
-  './app.js?v=9',
+  './app.js?v=10',
   './caja.js?v=13',
   './stock.js?v=7',
   './dashboard.js?v=7',
