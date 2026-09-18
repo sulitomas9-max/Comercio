@@ -234,6 +234,11 @@
           <div class="card"><div class="card-lbl">Total este mes</div><div class="card-val g" id="dash-mes-total">$0</div></div>
         </div>
         <div class="sec" style="margin-bottom:14px"><div class="sec-title">Ventas por mes</div><div id="dash-ventas-por-mes"></div></div>
+        <div class="sec" style="margin-bottom:14px">
+          <div class="sec-title">Día y horario más fuertes (histórico)</div>
+          <div style="font-size:13px;color:var(--txt2);margin:-4px 0 12px">Tu horario pico: <b id="dash-peak-hour" style="color:var(--txt)">-</b></div>
+          <div id="dash-peak-days"></div>
+        </div>
         <div class="sec" style="margin-bottom:14px"><div class="sec-title">Alertas del sistema</div><div id="alerts-panel"></div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
           <div class="sec"><div class="sec-title">Top productos</div><div id="dash-top-prods"></div></div>
@@ -906,7 +911,7 @@
 <script src="app.js?v=10"></script>
 <script src="caja.js?v=13"></script>
 <script src="stock.js?v=7"></script>
-<script src="dashboard.js?v=7"></script>
+<script src="dashboard.js?v=8"></script>
 <script src="importar.js?v=5"></script>
 <script src="gastos.js?v=2"></script>
 
