@@ -248,6 +248,75 @@ function renderDashboard() {
   renderHourlyChart();
   renderCatChart();
   renderVentasPorMes();
+  renderPeakTimes();
+}
+
+// ===== DIA Y HORARIO PICO (historico, todas las ventas) =====
+
+const DIAS_SEMANA_LABEL = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+// A diferencia de "Ventas por hora (hoy)", que solo mira el día de hoy, esto
+// suma TODO el historial de ventas para detectar qué día de la semana y qué
+// horario son los más fuertes en general — útil para decidir turnos, cuándo
+// reponer stock, etc.
+function calcPeakTimes() {
+  const dayTotals  = Array(7).fill(0);
+  const hourTotals = Array(24).fill(0);
+  let any = false;
+
+  store.sales.filter(s => !s.anulada).forEach(v => {
+    const d = v.ts ? new Date(v.ts) : parseLocalDate(v.date);
+    if (!d || isNaN(d.getTime())) return;
+    dayTotals[d.getDay()] += v.total;
+
+    let h;
+    if (v.ts) {
+      h = new Date(v.ts).getHours();
+    } else {
+      const rawH = (v.time || '0:00').split(':')[0].trim();
+      h = parseInt(rawH);
+      if ((v.time || '').includes('p. m.') && h !== 12) h += 12;
+      if ((v.time || '').includes('a. m.') && h === 12) h = 0;
+    }
+    if (!isNaN(h) && h >= 0 && h < 24) hourTotals[h] += v.total;
+    any = true;
+  });
+
+  return { dayTotals, hourTotals, any };
+}
+
+function renderPeakTimes() {
+  const daysEl = document.getElementById('dash-peak-days');
+  const hourEl = document.getElementById('dash-peak-hour');
+  if (!daysEl && !hourEl) return;
+
+  const { dayTotals, hourTotals, any } = calcPeakTimes();
+
+  if (daysEl) {
+    if (!any) {
+      daysEl.innerHTML = '<div style="color:var(--txt3);font-size:13px;padding:8px 0">Sin ventas registradas</div>';
+    } else {
+      const max = Math.max(1, ...dayTotals);
+      const orden = [1, 2, 3, 4, 5, 6, 0]; // lunes a domingo
+      daysEl.innerHTML = orden.map(i => `
+        <div class="rank-row">
+          <div class="rank-name" style="width:90px">${DIAS_SEMANA_LABEL[i]}</div>
+          <div class="rank-bar"><div class="rank-fill" style="width:${Math.round(dayTotals[i] / max * 100)}%;background:var(--blue)"></div></div>
+          <div class="rank-val">${formatMoney(dayTotals[i])}</div>
+        </div>`).join('');
+    }
+  }
+
+  if (hourEl) {
+    if (!any || hourTotals.every(v => v === 0)) {
+      hourEl.textContent = 'sin datos suficientes';
+    } else {
+      const maxH    = Math.max(...hourTotals);
+      const peakIdx = hourTotals.indexOf(maxH);
+      const next    = (peakIdx + 1) % 24;
+      hourEl.textContent = `${String(peakIdx).padStart(2, '0')}:00 – ${String(next).padStart(2, '0')}:00 hs`;
+    }
+  }
 }
 
 function renderTopProds(topProds) {
@@ -606,12 +675,29 @@ function evaluateAlerts() {
     });
   });
 
+  // Un producto se considera "top seller" si está en el 20% más vendido
+  // (entre los que tienen al menos 1 venta). Sirve para priorizar: quedarse
+  // sin stock de tu producto más vendido es mucho más urgente que quedarse
+  // sin stock de uno que casi no se mueve.
+  const vendidos = store.products.map(p => p.sold).filter(v => v > 0).sort((a, b) => b - a);
+  const topSellerThreshold = vendidos.length ? vendidos[Math.max(0, Math.ceil(vendidos.length * 0.2) - 1)] : Infinity;
+
   store.products.forEach(p => {
+    const esTopSeller = p.sold > 0 && p.sold >= topSellerThreshold;
+
     if (!esStockInfinito(p) && p.stock > 0 && p.stock <= p.minStock) {
-      alerts.push({ type: 'warn', icon: '⚠️', title: 'Stock bajo', desc: `${p.name}: quedan ${p.stock} unidades (mínimo: ${p.minStock})`, prodId: p.id });
+      if (esTopSeller) {
+        alerts.push({ type: 'err', icon: '🔥', title: 'Se vende mucho y queda poco stock', desc: `${p.name}: quedan ${p.stock} unidades (mínimo: ${p.minStock}) — lleva ${p.sold} vendidas en total`, prodId: p.id });
+      } else {
+        alerts.push({ type: 'warn', icon: '⚠️', title: 'Stock bajo', desc: `${p.name}: quedan ${p.stock} unidades (mínimo: ${p.minStock})`, prodId: p.id });
+      }
     }
     if (!esStockInfinito(p) && p.stock === 0) {
-      alerts.push({ type: 'err', icon: '🚫', title: 'Sin stock', desc: `${p.name} no tiene stock disponible`, prodId: p.id });
+      if (esTopSeller) {
+        alerts.push({ type: 'err', icon: '🔥', title: 'Sin stock de un producto top', desc: `${p.name} no tiene stock disponible y es uno de los más vendidos (${p.sold} en total)`, prodId: p.id });
+      } else {
+        alerts.push({ type: 'err', icon: '🚫', title: 'Sin stock', desc: `${p.name} no tiene stock disponible`, prodId: p.id });
+      }
     }
     if (p.stock > 0 && p.sold === 0 && store.sales.length > 10) {
       const threshold = new Date(now - 30 * 86400000);
