@@ -1275,7 +1275,26 @@ async function processSale() {
       if (!seguir) { return; }
     }
 
-    const saleId = store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
+    // store.sales solo se carga una vez al iniciar sesión y no se entera de
+    // ventas hechas en OTROS dispositivos mientras tanto. Si dos cajas venden
+    // a la vez, ambas podían calcular el MISMO N° de venta con datos viejos y,
+    // al guardar, la segunda pisaba y borraba por completo a la primera en
+    // Firebase (mismo ID = mismo documento) sin dejar ningún rastro de
+    // anulación. Por eso, antes de generar el ID, se chequea el máximo real
+    // actual contra Firebase (si hay conexión) para no chocar con ventas
+    // hechas desde otro dispositivo que este todavía no vio.
+    let saleId = store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
+    if (navigator.onLine && db) {
+      try {
+        const snap = await withTimeout(db.collection('sales').orderBy('id', 'desc').limit(1).get(), 4000, 'chequear último N° de venta');
+        if (!snap.empty) {
+          const maxRemote = snap.docs[0].data().id || 0;
+          if (maxRemote + 1 > saleId) saleId = maxRemote + 1;
+        }
+      } catch (e) {
+        console.warn('No se pudo chequear el último N° de venta en Firebase, se usa el local:', e);
+      }
+    }
     const updatedProducts = [];
     const newMovimientos  = [];
 
