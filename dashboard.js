@@ -159,6 +159,15 @@ function _renderVentasHoyLive(m) {
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     });
   }
+
+  // Mantener sincronizada la otra tarjeta "Ventas hoy" del dashboard
+  // (dash-hoy-*), que antes se calculaba una sola vez con calcMetrics()
+  // usando datos locales desactualizados y por eso podía mostrar un número
+  // distinto (más viejo) que esta consulta en vivo a Firebase.
+  const dashTotal = document.getElementById('dash-hoy-total');
+  const dashCount = document.getElementById('dash-hoy-count');
+  if (dashTotal) dashTotal.textContent = formatMoney(m.total);
+  if (dashCount) dashCount.textContent = m.count;
 }
 
 function startLiveVentasHoy() {
@@ -973,7 +982,8 @@ function openDevolucionModal(saleId) {
   }).join('');
 
   document.getElementById('dev-total').textContent = formatMoney(0);
-  const canAnular = !devPrevias.length;
+  const esAdmin = !!(store.currentUser && store.currentUser.role === 'admin');
+  const canAnular = !devPrevias.length && esAdmin;
   document.getElementById('dev-anular-btn').style.display = canAnular ? 'inline-block' : 'none';
   store._devSaleId = saleId;
   openModal('modal-devolucion');
@@ -1073,6 +1083,13 @@ async function saveDevolucion() {
 
 async function anularVenta(saleId) {
   initDevolucionesStore();
+  // Solo un administrador puede anular una venta completa (borra la venta
+  // del todo). Un cajero común solo puede hacer devoluciones parciales
+  // (ver saveDevolucion), que no ocultan que la venta existió.
+  if (!store.currentUser || store.currentUser.role !== 'admin') {
+    toast('Solo un administrador puede anular una venta completa', 'err');
+    return;
+  }
   if (!confirm(`¿Anular completamente la venta #${saleId}?`)) return;
   const sale = store.sales.find(s => s.id === saleId);
   if (!sale) { toast('Venta no encontrada', 'err'); return; }
