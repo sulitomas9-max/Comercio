@@ -907,9 +907,9 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="config.js?v=5"></script>
-<script src="firebase.js?v=14"></script>
+<script src="firebase.js?v=15"></script>
 <script src="app.js?v=10"></script>
-<script src="caja.js?v=13"></script>
+<script src="caja.js?v=14"></script>
 <script src="stock.js?v=7"></script>
 <script src="dashboard.js?v=8"></script>
 <script src="importar.js?v=5"></script>
@@ -920,8 +920,26 @@
   // Los datos se sincronizan aparte (ver firebase.js) apenas vuelve la conexión.
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(err => {
+      navigator.serviceWorker.register('sw.js').then(reg => {
+        setInterval(() => reg.update().catch(() => {}), 5 * 60 * 1000);
+      }).catch(err => {
         console.warn('No se pudo registrar el Service Worker:', err);
+      });
+
+      let _reloadedByUpdate = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (_reloadedByUpdate) return;
+        const tryReload = () => {
+          const cartEmpty  = !window.store || !store.cart || !store.cart.length;
+          const modalOpen  = document.querySelector('.modal-bg.on');
+          if (cartEmpty && !modalOpen) {
+            _reloadedByUpdate = true;
+            location.reload();
+          } else {
+            setTimeout(tryReload, 4000);
+          }
+        };
+        tryReload();
       });
     });
   }
