@@ -1283,18 +1283,12 @@ async function processSale() {
     // anulación. Por eso, antes de generar el ID, se chequea el máximo real
     // actual contra Firebase (si hay conexión) para no chocar con ventas
     // hechas desde otro dispositivo que este todavía no vio.
-    let saleId = store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
-    if (navigator.onLine && db) {
-      try {
-        const snap = await withTimeout(db.collection('sales').orderBy('id', 'desc').limit(1).get(), 4000, 'chequear último N° de venta');
-        if (!snap.empty) {
-          const maxRemote = snap.docs[0].data().id || 0;
-          if (maxRemote + 1 > saleId) saleId = maxRemote + 1;
-        }
-      } catch (e) {
-        console.warn('No se pudo chequear el último N° de venta en Firebase, se usa el local:', e);
-      }
-    }
+    // N° de venta a prueba de colisiones: usa un contador atómico compartido
+    // en Firebase (ver getNextSaleId en firebase.js) en vez de calcularlo con
+    // datos locales, así dos cajas vendiendo al mismo tiempo NUNCA pueden
+    // terminar con el mismo número, sin importar qué tan vieja esté la
+    // pestaña de cada una.
+    const saleId = await getNextSaleId();
     const updatedProducts = [];
     const newMovimientos  = [];
 
