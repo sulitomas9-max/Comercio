@@ -76,6 +76,12 @@ function updateCajaBar() {
     document.getElementById('caja-bar-sub').textContent =
       `Cajero: ${store.cajaAbierta.cajeroNombre || '—'} · Desde ${store.cajaAbierta.inicio || '—'}`;
 
+    // La barra lateral mostraba el nombre de la cuenta con la que se inició
+    // sesión (por ej. "Cajera" si es la cuenta compartida); acá la
+    // sincronizamos con el nombre real que la persona tipeó al abrir caja.
+    const unameEl = document.getElementById('sb-uname');
+    if (unameEl && store.cajaAbierta.cajeroNombre) unameEl.textContent = store.cajaAbierta.cajeroNombre;
+
     const ventasEf       = calcVentasEfCaja();
     const ventasTransfer = calcVentasMetodoCaja('transfer');
     const ventasTarjeta  = calcVentasMetodoCaja('card');
@@ -113,10 +119,36 @@ function updateCajaBar() {
 
 // ===== ABRIR CAJA =====
 
+// Nombre/id de quien esta atendiendo AHORA (la persona que tipeo su nombre al
+// abrir la caja, ver abrirCaja()), no necesariamente la cuenta con la que se
+// inicio sesion -esto importa cuando varias cajeras comparten una misma
+// cuenta de login ("Cajera") y se identifican por nombre al abrir caja cada
+// una. Si no hay caja abierta se usa el usuario logueado como respaldo.
+function cajeroActivoId() {
+  return (store.cajaAbierta && store.cajaAbierta.cajeroId) || (store.currentUser && store.currentUser.id) || '';
+}
+function cajeroActivoNombre() {
+  return (store.cajaAbierta && store.cajaAbierta.cajeroNombre) || (store.currentUser && store.currentUser.name) || 'Sistema';
+}
+
+function _nombresCajeroConocidos() {
+  // Sugerencias para el campo de nombre al abrir caja: junta los nombres que
+  // ya se usaron antes (aperturas de caja y ventas), para que autocompletar
+  // evite que "Debora" y "debora" queden separadas en los reportes por un
+  // error de tipeo. No obliga a elegir de la lista: se puede cargar un
+  // nombre nuevo la primera vez sin problema.
+  const nombres = new Set();
+  (store.cajaHistory || []).forEach(c => { if (c.cajeroNombre) nombres.add(c.cajeroNombre); });
+  (store.sales || []).forEach(s => { if (s.userName) nombres.add(s.userName); });
+  if (store.cajaAbierta && store.cajaAbierta.cajeroNombre) nombres.add(store.cajaAbierta.cajeroNombre);
+  return [...nombres].sort((a, b) => a.localeCompare(b, 'es'));
+}
+
 function openAbrirCaja() {
-  const sel = document.getElementById('caj-cajero-sel');
-  sel.innerHTML = store.users.map(u => `<option value="${u.id}">${u.name}</option>`).join('');
-  sel.value = store.currentUser.id;
+  const inp  = document.getElementById('caj-cajero-sel');
+  const list = document.getElementById('caj-cajero-list');
+  if (list) list.innerHTML = _nombresCajeroConocidos().map(n => `<option value="${n}"></option>`).join('');
+  if (inp)  inp.value = (store.cajaAbierta && store.cajaAbierta.cajeroNombre) || store.currentUser.name || '';
   document.getElementById('caj-inicial').value = store.saldoAnterior || '';
   const hint = document.getElementById('caj-hint-saldo');
   if (store.saldoAnterior > 0) {
@@ -130,9 +162,13 @@ function openAbrirCaja() {
 }
 
 async function abrirCaja() {
-  const inicial = parseFloat(document.getElementById('caj-inicial').value) || 0;
-  const uid     = document.getElementById('caj-cajero-sel').value;
-  const user    = store.users.find(u => u.id === uid) || store.currentUser;
+  const inicial      = parseFloat(document.getElementById('caj-inicial').value) || 0;
+  const nombreCajero = (document.getElementById('caj-cajero-sel').value || '').trim();
+
+  if (!nombreCajero) {
+    toast('Escribí el nombre de quién abre la caja', 'err');
+    return;
+  }
 
   // ID único basado en la hora exacta. Antes se calculaba como
   // "el id más alto que tengo cargado localmente, + 1", pero si el
@@ -143,8 +179,12 @@ async function abrirCaja() {
 
   store.cajaAbierta = {
     id:           newId,
-    cajeroId:     user.id,
-    cajeroNombre: user.name || user.id || 'Cajero',
+    // cajeroId es la cuenta con la que se inició sesión (puede ser una cuenta
+    // compartida, ej. "Cajera"); cajeroNombre es el nombre real que la
+    // persona tipeó acá y es lo que se usa en ventas/reportes/historial para
+    // saber quién atendió cada cosa.
+    cajeroId:     store.currentUser.id,
+    cajeroNombre: nombreCajero,
     inicio:       new Date().toLocaleString('es-AR'),
     inicial,
     abierta:      true,
@@ -286,8 +326,8 @@ async function saveRetiro() {
     id:       Date.now(),
     cajaId:   store.cajaAbierta.id,
     monto, motivo,
-    userId:   store.currentUser.id,
-    userName: store.currentUser.name,
+    userId:   cajeroActivoId(),
+    userName: cajeroActivoNombre(),
     fecha:    new Date().toLocaleString('es-AR'),
   };
   store.retiros.push(retiro);
@@ -510,7 +550,7 @@ async function confirmarCambio() {
     total: totalDev, totalNuevo, diferencia,
     metodoPago: diferencia !== 0 ? store._cambioPay : null,
     motivo, cajaId: store.cajaAbierta.id,
-    userId: store.currentUser.id, userName: store.currentUser.name,
+    userId: cajeroActivoId(), userName: cajeroActivoNombre(),
     fecha: new Date().toLocaleString('es-AR'),
   };
   store.devoluciones.push(cambio);
@@ -1191,8 +1231,8 @@ function registrarMovimiento(prodId, tipo, cantidad, stockAntes, stockDespues, m
     id:           store.movimientos.length ? Math.max(...store.movimientos.map(m => m.id)) + 1 : 1,
     prodId, prodName: prod?.name || '', tipo, cantidad, stockAntes, stockDespues,
     motivo:       motivo || tipo,
-    userId:       store.currentUser?.id   || '',
-    userName:     store.currentUser?.name || 'Sistema',
+    userId:       cajeroActivoId(),
+    userName:     cajeroActivoNombre(),
     fecha:        new Date().toLocaleString('es-AR'),
   };
   store.movimientos.push(mov);
@@ -1325,7 +1365,7 @@ async function processSale() {
       ts: now.getTime(),
       items: [...store.cart], subtotal, descuento: descMonto, descPct, total,
       method: metodoVenta,
-      userId: store.currentUser.id, userName: store.currentUser.name,
+      userId: cajeroActivoId(), userName: cajeroActivoNombre(),
     };
     if (paymentSplit) sale.paymentSplit = paymentSplit;
     store.sales.push(sale);
