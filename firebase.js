@@ -619,6 +619,41 @@ async function _loadDevoluciones() {
 async function saveProduct(product)  { await saveDoc('products', product.id, product); }
 async function removeProduct(id)     { await deleteDoc('products', id); }
 
+// ===== ID DE VENTA A PRUEBA DE COLISIONES =====
+// En vez de calcular el N° de venta con datos locales, se le pide un
+// número a Firebase mediante una transacción atómica: garantiza que dos
+// cajas pidiendo un número al mismo tiempo NUNCA reciban el mismo,
+// sin importar qué tan vieja esté la pestaña de cada una.
+async function getNextSaleId() {
+  if (!navigator.onLine || !db) {
+    return store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
+  }
+
+  const counterRef = db.collection('_counters').doc('sales');
+
+  try {
+    const snap = await withTimeout(counterRef.get(), 4000, 'leer contador de ventas');
+    if (!snap.exists) {
+      const maxSnap = await withTimeout(
+        db.collection('sales').orderBy('id', 'desc').limit(1).get(), 4000, 'buscar último N° de venta'
+      );
+      const seed = (maxSnap.empty ? 0 : (maxSnap.docs[0].data().id || 0)) + 1;
+      await counterRef.set({ value: seed }, { merge: true });
+    }
+
+    return await db.runTransaction(async (tx) => {
+      const s = await tx.get(counterRef);
+      const current = (s.exists && s.data().value) || 0;
+      const next = current + 1;
+      tx.set(counterRef, { value: next });
+      return next;
+    });
+  } catch (e) {
+    console.warn('No se pudo usar el contador atómico de ventas, se usa el cálculo local:', e);
+    return store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
+  }
+}
+
 async function saveSale(sale, updatedProducts, newMovimientos) {
   saveLocalData();
   if (!navigator.onLine || !db) {
