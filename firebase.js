@@ -629,7 +629,12 @@ async function getNextSaleId() {
     return store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
   }
 
-  const counterRef = db.collection('_counters').doc('sales');
+  // Se guarda dentro de la colección 'config' (la misma que ya usa
+  // saveSaldoConfig) en vez de una colección nueva '_counters', porque las
+  // reglas de seguridad de Firestore solo permiten las colecciones que la
+  // app ya usaba -una colección nueva quedaba bloqueada silenciosamente y
+  // el código caia siempre al cálculo local (el mismo bug de antes).
+  const counterRef = db.collection('config').doc('salesCounter');
 
   try {
     const snap = await withTimeout(counterRef.get(), 4000, 'leer contador de ventas');
