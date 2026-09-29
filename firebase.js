@@ -59,15 +59,31 @@ function _cleanupOldFirestoreCache() {
   } catch (e) {}
 }
 
+// Copia de respaldo en localStorage para poder seguir trabajando sin
+// internet. El navegador da ~5 MB para esto y la base completa ya pesa más
+// (solo los movimientos son ~3 MB): desde el 25/9 la copia completa no
+// entraba, el guardado fallaba en silencio y quedaba una copia vieja que la
+// app mostraba cuando no lograba conectarse (la caja de Dani del 25/9).
+// Ahora se guarda solo lo necesario para trabajar sin conexión: productos,
+// cajas, usuarios, etc. y las ventas recientes (no todo el historial ni los
+// movimientos, que igual están en Firebase y en la copia de IndexedDB).
+const _LOCAL_VENTAS_DIAS = 3;
+
+function _ventasParaCopiaLocal() {
+  const desde = Date.now() - _LOCAL_VENTAS_DIAS * 24 * 60 * 60 * 1000;
+  const cajaId = store.cajaAbierta ? store.cajaAbierta.id : null;
+  return (store.sales || []).filter(s => (s.ts && s.ts >= desde) || (cajaId && s.cajaId === cajaId));
+}
+
 function saveLocalData() {
   try {
     const snapshot = {
       products:     store.products,
       proveedores:  store.proveedores,
-      sales:        store.sales,
+      sales:        _ventasParaCopiaLocal(),
       cajaHistory:  store.cajaHistory,
       retiros:      store.retiros,
-      movimientos:  store.movimientos,
+      movimientos:  [],
       ctacteMovs:   store.ctacteMovs,
       orders:       store.orders,
       combos:       store.combos,
@@ -86,6 +102,9 @@ function saveLocalData() {
     localStorage.setItem(OFFLINE_DATA_KEY, JSON.stringify(snapshot));
   } catch(e) {
     console.warn('No se pudo guardar datos locales:', e);
+    // Mejor no tener copia que tener una vieja: si no se pudo actualizar, se
+    // borra la anterior para que la app nunca muestre datos de otro día.
+    try { localStorage.removeItem(OFFLINE_DATA_KEY); } catch (e2) {}
   }
 }
 
@@ -94,7 +113,9 @@ function loadLocalData() {
     const raw = localStorage.getItem(OFFLINE_DATA_KEY);
     if (!raw) return false;
     const s = JSON.parse(raw);
-    if (Date.now() - s.savedAt > 7 * 24 * 60 * 60 * 1000) return false;
+    // Una copia de hace más de 2 días ya no sirve para vender (caja, stock
+    // y precios pueden haber cambiado): mejor avisar que no hay conexión.
+    if (Date.now() - s.savedAt > 2 * 24 * 60 * 60 * 1000) return false;
     store.products     = s.products     || [];
     store.proveedores  = s.proveedores  || [];
     store.sales        = s.sales        || [];
@@ -659,7 +680,12 @@ async function _loadCollectionWithRetry(loadFn, label, attempts = 2) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     try {
-      await withTimeout(loadFn(), 10000, label);
+      // 30s por intento (antes 10s): con ~14.500 movimientos, bajar esa
+      // colección completa ya tarda ~10s incluso con buena conexión, así que
+      // con 10s fallaba siempre en las compus más lentas y la app terminaba
+      // mostrando la copia local (vieja). Desde que la carga es incremental
+      // esto casi nunca se usa, pero la carga completa semanal lo necesita.
+      await withTimeout(loadFn(), 30000, label);
       return;
     } catch (e) {
       lastErr = e;
@@ -763,7 +789,7 @@ async function loadFromFirebase() {
         console.error('[BazarHub] No se pudieron actualizar estas colecciones (se reintentó y siguió fallando):', failed);
         toast(`No se pudo actualizar: ${failed.join(', ')}. El resto de los datos sí está al día.`, 'warn');
       }
-    })(), 45000, 'cargar datos del sistema');
+    })(), 90000, 'cargar datos del sistema');
     loadedFresh = true;
   } catch(e) {
     console.error('loadFromFirebase error:', e);
