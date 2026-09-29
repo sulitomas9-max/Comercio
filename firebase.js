@@ -153,6 +153,31 @@ function updateConnBadge() {
 
 // ===== SINCRONIZACIÓN AUTOMÁTICA =====
 
+// Si una operación en cola para guardar una venta ('sales') apunta a un
+// N° que mientras tanto ya fue usado por OTRA venta -por ejemplo, esta
+// quedó en la cola porque falló la conexión justo al cobrar, y en el
+// medio otro dispositivo ya usó ese mismo número-, sincronizarla tal cual
+// pisaría (borraría sin dejar rastro) la venta ajena: el mismo problema de
+// fondo que llevó a hacer el guardado de ventas a prueba de colisiones
+// más arriba (ver saveSale). Acá se hace el mismo chequeo antes de
+// escribir, para esta otra puerta de entrada a Firebase.
+async function _resolverColisionVentaEnCola(item) {
+  if (item.col !== 'sales') return item;
+  const ref = db.collection('sales').doc(String(item.id));
+  const snap = await withTimeout(ref.get(), 8000, 'chequear venta en cola');
+  if (!snap.exists) return item;
+  const existente = snap.data();
+  // Si el documento que ya está en Firebase es la MISMA venta (coincide
+  // fecha/hora y cajero), no es una colisión real: es un reintento de una
+  // sincronización anterior que se cortó a mitad de camino, y está bien
+  // volver a escribirla igual.
+  if (existente && existente.ts === item.data.ts && existente.userName === item.data.userName) {
+    return item;
+  }
+  const nuevoId = await getNextSaleId();
+  return { ...item, id: nuevoId, data: { ...item.data, id: nuevoId } };
+}
+
 async function syncOfflineQueue() {
   const queue = getOfflineQueue();
   if (!queue.length || !navigator.onLine || !db) return;
@@ -161,12 +186,17 @@ async function syncOfflineQueue() {
   for (const op of queue) {
     try {
       if (op.type === 'set') {
-        await withTimeout(db.collection(op.col).doc(String(op.id)).set(op.data), 10000, 'sincronizar ' + op.col);
+        const item = await _resolverColisionVentaEnCola(op);
+        await withTimeout(db.collection(item.col).doc(String(item.id)).set(item.data), 10000, 'sincronizar ' + item.col);
       } else if (op.type === 'delete') {
         await withTimeout(db.collection(op.col).doc(String(op.id)).delete(), 10000, 'sincronizar ' + op.col);
       } else if (op.type === 'batch') {
-        const batch = db.batch();
+        const items = [];
         for (const item of op.items) {
+          items.push(item.type === 'set' ? await _resolverColisionVentaEnCola(item) : item);
+        }
+        const batch = db.batch();
+        for (const item of items) {
           if (item.type === 'set')
             batch.set(db.collection(item.col).doc(String(item.id)), item.data);
           else if (item.type === 'delete')
