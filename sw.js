@@ -19,7 +19,7 @@
  * nuevos de una sola vez en vez de ir goteando de a uno.
  */
 
-const CACHE_VERSION = 'bazarhub-shell-v22';
+const CACHE_VERSION = 'bazarhub-shell-v23';
 
 // Archivos propios del sitio (mismo origen) + librerías externas, con las
 // mismas versiones/URLs exactas que usa index.html hoy.
@@ -28,11 +28,11 @@ const CORE_ASSETS = [
   './index.html',
   './styles.css',
   './config.js?v=5',
-  './firebase.js?v=19',
+  './firebase.js?v=20',
   './app.js?v=10',
   './caja.js?v=15',
   './stock.js?v=7',
-  './dashboard.js?v=8',
+  './dashboard.js?v=9',
   './importar.js?v=5',
   './gastos.js?v=2',
 ];
