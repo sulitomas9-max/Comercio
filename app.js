@@ -408,7 +408,14 @@ async function tryRestoreSession() {
   if (!saved || !saved.userId) return;
 
   const user = store.users.find(u => u.id === saved.userId);
-  if (!user) { clearSession(); return; }
+  if (!user) {
+    clearSession();
+    // Si ya se estaba mostrando la app con esa sesión (datos locales viejos
+    // mientras Firebase terminaba de conectar) y el usuario ya no existe,
+    // volver al login en vez de dejar la pantalla con datos de otro día.
+    if (store.currentUser) doLogout();
+    return;
+  }
 
   store.currentUser = user;
   document.getElementById('login').style.display = 'none';
