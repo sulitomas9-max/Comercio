@@ -170,6 +170,32 @@ async function abrirCaja() {
     return;
   }
 
+  // Antes de crear una caja nueva, se le vuelve a preguntar a Firebase (no
+  // al estado local, que puede estar desactualizado si esta pestaña no vio
+  // el cambio) si ya hay una caja abierta. Pasó una vez: dos cajas quedaron
+  // abiertas al mismo tiempo y las ventas de ese rato se repartieron entre
+  // las dos -al arquear, una de las dos no se contaba. Si ya hay una
+  // abierta, se recupera esa en vez de crear otra.
+  if (navigator.onLine && db) {
+    try {
+      const yaAbiertaSnap = await withTimeout(
+        db.collection('cajas').where('abierta', '==', true).get(),
+        8000, 'chequear caja abierta'
+      );
+      if (!yaAbiertaSnap.empty) {
+        const existente = yaAbiertaSnap.docs[0].data();
+        store.cajaAbierta = { id: parseInt(yaAbiertaSnap.docs[0].id), ...existente };
+        store.saldoAnterior = 0;
+        closeModal('modal-abrir-caja');
+        updateCajaBar();
+        toast(`Ya había una caja abierta a nombre de ${existente.cajeroNombre || '—'} — se recuperó esa en vez de abrir una nueva`, 'warn');
+        return;
+      }
+    } catch (e) {
+      console.warn('No se pudo chequear si ya había una caja abierta, se continúa igual:', e);
+    }
+  }
+
   // ID único basado en la hora exacta. Antes se calculaba como
   // "el id más alto que tengo cargado localmente, + 1", pero si el
   // dispositivo estaba offline o con datos incompletos, dos cajas
