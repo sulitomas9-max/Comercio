@@ -669,21 +669,53 @@ async function saveSale(sale, updatedProducts, newMovimientos) {
     ]});
     return;
   }
-  try {
-    const batch = db.batch();
-    batch.set(db.collection('sales').doc(String(sale.id)), sale);
-    updatedProducts.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
-    newMovimientos.forEach(m => batch.set(db.collection('movimientos').doc(String(m.id)), m));
-    await withTimeout(batch.commit(), 10000, 'guardar venta');
-    saveLocalData();
-  } catch(e) {
-    console.error('saveSale error:', e);
-    addToOfflineQueue({ type: 'batch', items: [
-      { type: 'set', col: 'sales',      id: String(sale.id), data: sale },
-      ...updatedProducts.map(p => ({ type: 'set', col: 'products',   id: String(p.id), data: p })),
-      ...newMovimientos.map(m => ({ type: 'set', col: 'movimientos', id: String(m.id), data: m })),
-    ]});
+
+  // Segunda red de seguridad además de getNextSaleId(): antes de grabar
+  // comprobamos que el N° de venta esté realmente libre. Si por lo que sea
+  // (una pestaña con el código viejo, una falla de red que hizo caer al
+  // cálculo local, etc.) dos ventas llegan a calcular el mismo número, ACÁ
+  // se corta en vez de pisar (destruir) la venta que ya existía con ese
+  // número: se le asigna uno nuevo a ESTA venta y se reintenta. Así una
+  // venta real nunca vuelve a desaparecer en silencio, aunque el número que
+  // le tocó ya esté usado.
+  for (let intento = 1; intento <= 5; intento++) {
+    try {
+      const saleRef  = db.collection('sales').doc(String(sale.id));
+      const yaExiste = await withTimeout(saleRef.get(), 4000, 'verificar N° de venta');
+      if (yaExiste.exists) {
+        console.warn(`N° de venta #${sale.id} ya estaba usado, se pide uno nuevo (intento ${intento})`);
+        sale.id = await getNextSaleId();
+        continue;
+      }
+
+      const batch = db.batch();
+      batch.set(saleRef, sale);
+      updatedProducts.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
+      newMovimientos.forEach(m => batch.set(db.collection('movimientos').doc(String(m.id)), m));
+      await withTimeout(batch.commit(), 10000, 'guardar venta');
+      saveLocalData();
+      return;
+    } catch(e) {
+      console.error('saveSale error:', e);
+      addToOfflineQueue({ type: 'batch', items: [
+        { type: 'set', col: 'sales',      id: String(sale.id), data: sale },
+        ...updatedProducts.map(p => ({ type: 'set', col: 'products',   id: String(p.id), data: p })),
+        ...newMovimientos.map(m => ({ type: 'set', col: 'movimientos', id: String(m.id), data: m })),
+      ]});
+      return;
+    }
   }
+
+  // Si después de varios intentos seguimos chocando, algo más raro está
+  // pasando (ej. muchísimas cajas vendiendo a la vez): igual guardamos la
+  // venta con el último número que conseguimos, en vez de perderla por
+  // completo, y lo dejamos anotado en la consola para poder revisarlo.
+  console.error(`saveSale: no se consiguió un N° de venta libre después de varios intentos, se guarda igual con #${sale.id}`);
+  addToOfflineQueue({ type: 'batch', items: [
+    { type: 'set', col: 'sales',      id: String(sale.id), data: sale },
+    ...updatedProducts.map(p => ({ type: 'set', col: 'products',   id: String(p.id), data: p })),
+    ...newMovimientos.map(m => ({ type: 'set', col: 'movimientos', id: String(m.id), data: m })),
+  ]});
 }
 
 async function saveStockAdjustment(product, movimiento) {
