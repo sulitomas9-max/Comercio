@@ -7,14 +7,19 @@
  * en firebase.js (cola local + Firestore persistence) — este archivo solo se
  * encarga de que la app en sí (los archivos) cargue sin wifi.
  *
+ * A PROPÓSITO la app NUNCA se actualiza sola en una pestaña que ya está
+ * abierta: no hay skipWaiting() ni clients.claim() (ver abajo), así que un
+ * Service Worker nuevo se queda esperando sin interrumpir a nadie. La
+ * próxima vez que esa pestaña se cierre y se abra de nuevo, ahí sí toma la
+ * versión más reciente (index.html siempre se pide a la red primero).
+ *
  * IMPORTANTE al desplegar un cambio: si se bumpea el "?v=N" de algún .js en
- * index.html, conviene también bumpear CACHE_VERSION acá abajo para forzar
- * a los usuarios a bajar la versión nueva (si no, igual la reciben apenas
- * haya conexión gracias a la estrategia network-first/stale-while-revalidate,
- * pero bumpear la versión asegura una limpieza total de la caché vieja).
+ * index.html, conviene también bumpear CACHE_VERSION acá abajo, para que
+ * cuando alguien cierre y vuelva a abrir la app reciba todos los archivos
+ * nuevos de una sola vez en vez de ir goteando de a uno.
  */
 
-const CACHE_VERSION = 'bazarhub-shell-v17';
+const CACHE_VERSION = 'bazarhub-shell-v18';
 
 // Archivos propios del sitio (mismo origen) + librerías externas, con las
 // mismas versiones/URLs exactas que usa index.html hoy.
@@ -46,7 +51,11 @@ const EXTERNAL_ASSETS = [
 ];
 
 self.addEventListener('install', event => {
-  self.skipWaiting();
+  // A propósito NO se llama a self.skipWaiting() acá: así, un Service
+  // Worker nuevo se queda "esperando" y no reemplaza al que ya está
+  // corriendo en una pestaña abierta -recién pasa a controlarla la
+  // próxima vez que esa pestaña se cierre y se vuelva a abrir sola. Esto es
+  // intencional: la app nunca se actualiza sola en medio de una venta.
   event.waitUntil(
     caches.open(CACHE_VERSION).then(cache => {
       const same = Promise.all(
@@ -67,11 +76,13 @@ self.addEventListener('install', event => {
 });
 
 self.addEventListener('activate', event => {
+  // Tampoco se llama a self.clients.claim() acá, por la misma razón: no
+  // queremos que este Service Worker tome control de pestañas que ya
+  // estaban abiertas con la versión anterior.
   event.waitUntil(
     caches
       .keys()
       .then(keys => Promise.all(keys.filter(k => k !== CACHE_VERSION).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
   );
 });
 
