@@ -19,7 +19,7 @@
  * nuevos de una sola vez en vez de ir goteando de a uno.
  */
 
-const CACHE_VERSION = 'bazarhub-shell-v19';
+const CACHE_VERSION = 'bazarhub-shell-v20';
 
 // Archivos propios del sitio (mismo origen) + librerías externas, con las
 // mismas versiones/URLs exactas que usa index.html hoy.
@@ -118,12 +118,23 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Resto de los archivos propios y externos: stale-while-revalidate.
-  // Se sirve lo cacheado al instante si existe (ignorando query strings,
-  // como el "?v=N" de cache-busting) y en paralelo se actualiza la caché
-  // en segundo plano para la próxima vez.
+  // Archivos propios (mismo origen, con "?v=N" de cache-busting): acá SE
+  // RESPETA el query string (nada de ignoreSearch) a propósito. Si no fuera
+  // así, una pestaña que todavía tiene activo el Service Worker viejo (ver
+  // arriba -nunca se lo fuerza a tomar el control-) podía seguir sirviendo
+  // "firebase.js?v=17" con el contenido cacheado de "firebase.js?v=16": con
+  // ignoreSearch los trataba como "el mismo archivo" y listo, aunque
+  // index.html ya pedía la versión nueva. Respetando el query string, un
+  // cambio de versión siempre se nota como un archivo nuevo (cache-miss) y
+  // se pide a la red apenas se abre una pestaña nueva, sin importar si el
+  // Service Worker viejo todavía no terminó de jubilarse.
+  //
+  // Recursos externos (CDN) siguen con ignoreSearch: no tienen este
+  // esquema de versionado propio.
+  const sameOrigin = url.origin === self.location.origin;
+
   event.respondWith(
-    caches.match(req, { ignoreSearch: true }).then(cached => {
+    caches.match(req, { ignoreSearch: !sameOrigin }).then(cached => {
       const fetchAndCache = fetch(req)
         .then(res => {
           if (res && (res.ok || res.type === 'opaque')) {
