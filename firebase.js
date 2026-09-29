@@ -639,20 +639,22 @@ async function getNextSaleId() {
   // el código caia siempre al cálculo local (el mismo bug de antes).
   const counterRef = db.collection('config').doc('salesCounter');
 
+  // Piso de seguridad: si el contador quedara atrasado respecto a las
+  // ventas que ya existen en Firebase (por ejemplo, si algún dispositivo
+  // viejo guardó ventas calculando el número por su cuenta en vez de pedirlo
+  // acá -pasó una vez, ver el bug de los N° pisados-), usarlo tal cual
+  // generaría números ya ocupados: cada uno chocaría en saveSale() y
+  // obligaría a pedir uno nuevo, con un viaje de red de más por cada
+  // choque. Usando como piso el máximo de venta que YA tenemos cargado en
+  // este dispositivo, el contador se pone al día solo en este mismo viaje
+  // de red, sin necesidad de ir chocando de a uno.
+  const maxLocalConocido = store.sales.length ? Math.max(...store.sales.map(s => s.id)) : 0;
+
   try {
     return await withTimeout(db.runTransaction(async (tx) => {
       const snap = await tx.get(counterRef);
-      if (!snap.exists) {
-        // Caso excepcional que en teoría ya no debería repetirse (el
-        // documento del contador ya existe en Firebase): arranca del mejor
-        // número que tengamos a mano localmente en vez de hacer una
-        // consulta aparte (las transacciones de Firestore no admiten
-        // consultas con orderBy, solo lectura de documentos puntuales).
-        const seed = (store.sales.length ? Math.max(...store.sales.map(s => s.id)) : 0) + 1;
-        tx.set(counterRef, { value: seed });
-        return seed;
-      }
-      const next = (snap.data().value || 0) + 1;
+      const actual = snap.exists ? (snap.data().value || 0) : 0;
+      const next = Math.max(actual, maxLocalConocido) + 1;
       tx.set(counterRef, { value: next });
       return next;
     }), 6000, 'obtener N° de venta');
