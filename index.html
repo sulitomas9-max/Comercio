@@ -920,40 +920,16 @@
   // Los datos se sincronizan aparte (ver firebase.js) apenas vuelve la conexión.
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      // Si esta pestaña YA estaba controlada por un Service Worker (es
-      // decir, no es la primera carga), un cambio de controller más
-      // adelante significa "hay una versión nueva" y ahí sí conviene
-      // recargar sola. Si en cambio arranca SIN controller (pestaña recién
-      // abierta, primera vez que el navegador instala el Service Worker),
-      // ese mismo evento se dispara igual apenas el Service Worker toma
-      // control de la página por primera vez -sin que haya ninguna versión
-      // nueva- y no hay que recargar: eso era lo que hacía que la app
-      // pareciera "cerrarse y volver a abrirse sola" apenas se la abría en
-      // una pestaña nueva.
-      const yaEstabaControlada = !!navigator.serviceWorker.controller;
-
-      navigator.serviceWorker.register('sw.js').then(reg => {
-        setInterval(() => reg.update().catch(() => {}), 5 * 60 * 1000);
-      }).catch(err => {
+      // Solo registra el Service Worker para que la app funcione sin
+      // conexión. A propósito NO chequea versiones nuevas ni recarga la
+      // página sola bajo ningún caso -eso causaba que la app se cerrara y
+      // volviera a abrir sola en medio de una venta-. La versión más nueva
+      // se baja siempre que se abre una pestaña nueva (index.html se pide
+      // siempre a la red primero), y para las pestañas que ya estaban
+      // abiertas alcanza con cerrarlas y volver a abrirlas cuando se sepa
+      // que hay un cambio importante.
+      navigator.serviceWorker.register('sw.js').catch(err => {
         console.warn('No se pudo registrar el Service Worker:', err);
-      });
-
-      if (!yaEstabaControlada) return;
-
-      let _reloadedByUpdate = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (_reloadedByUpdate) return;
-        const tryReload = () => {
-          const cartEmpty  = !window.store || !store.cart || !store.cart.length;
-          const modalOpen  = document.querySelector('.modal-bg.on');
-          if (cartEmpty && !modalOpen) {
-            _reloadedByUpdate = true;
-            location.reload();
-          } else {
-            setTimeout(tryReload, 4000);
-          }
-        };
-        tryReload();
       });
     });
   }
