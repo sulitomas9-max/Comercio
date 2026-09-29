@@ -624,6 +624,9 @@ async function removeProduct(id)     { await deleteDoc('products', id); }
 // número a Firebase mediante una transacción atómica: garantiza que dos
 // cajas pidiendo un número al mismo tiempo NUNCA reciban el mismo,
 // sin importar qué tan vieja esté la pestaña de cada una.
+//
+// Todo en UN solo viaje de red (antes eran dos: una lectura suelta del
+// contador + la transacción) para que pasar una venta no se sienta lento.
 async function getNextSaleId() {
   if (!navigator.onLine || !db) {
     return store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
@@ -637,22 +640,22 @@ async function getNextSaleId() {
   const counterRef = db.collection('config').doc('salesCounter');
 
   try {
-    const snap = await withTimeout(counterRef.get(), 4000, 'leer contador de ventas');
-    if (!snap.exists) {
-      const maxSnap = await withTimeout(
-        db.collection('sales').orderBy('id', 'desc').limit(1).get(), 4000, 'buscar último N° de venta'
-      );
-      const seed = (maxSnap.empty ? 0 : (maxSnap.docs[0].data().id || 0)) + 1;
-      await counterRef.set({ value: seed }, { merge: true });
-    }
-
-    return await db.runTransaction(async (tx) => {
-      const s = await tx.get(counterRef);
-      const current = (s.exists && s.data().value) || 0;
-      const next = current + 1;
+    return await withTimeout(db.runTransaction(async (tx) => {
+      const snap = await tx.get(counterRef);
+      if (!snap.exists) {
+        // Caso excepcional que en teoría ya no debería repetirse (el
+        // documento del contador ya existe en Firebase): arranca del mejor
+        // número que tengamos a mano localmente en vez de hacer una
+        // consulta aparte (las transacciones de Firestore no admiten
+        // consultas con orderBy, solo lectura de documentos puntuales).
+        const seed = (store.sales.length ? Math.max(...store.sales.map(s => s.id)) : 0) + 1;
+        tx.set(counterRef, { value: seed });
+        return seed;
+      }
+      const next = (snap.data().value || 0) + 1;
       tx.set(counterRef, { value: next });
       return next;
-    });
+    }), 6000, 'obtener N° de venta');
   } catch (e) {
     console.warn('No se pudo usar el contador atómico de ventas, se usa el cálculo local:', e);
     return store.sales.length ? Math.max(...store.sales.map(s => s.id)) + 1 : 1;
@@ -670,32 +673,37 @@ async function saveSale(sale, updatedProducts, newMovimientos) {
     return;
   }
 
-  // Segunda red de seguridad además de getNextSaleId(): antes de grabar
-  // comprobamos que el N° de venta esté realmente libre. Si por lo que sea
-  // (una pestaña con el código viejo, una falla de red que hizo caer al
-  // cálculo local, etc.) dos ventas llegan a calcular el mismo número, ACÁ
-  // se corta en vez de pisar (destruir) la venta que ya existía con ese
-  // número: se le asigna uno nuevo a ESTA venta y se reintenta. Así una
-  // venta real nunca vuelve a desaparecer en silencio, aunque el número que
-  // le tocó ya esté usado.
+  // Guarda todo (venta + productos + movimientos) en UNA sola transacción,
+  // que de paso comprueba que el N° de venta esté realmente libre antes de
+  // escribir -así no hace falta un viaje de red aparte solo para chequear.
+  // Esta es la segunda red de seguridad además de getNextSaleId(): si por
+  // lo que sea (una pestaña con el código viejo, una falla de red que hizo
+  // caer al cálculo local, etc.) dos ventas llegan a calcular el mismo
+  // número, ACÁ se corta en vez de pisar (destruir) la venta que ya
+  // existía: se le asigna uno nuevo a ESTA venta y se reintenta. Así una
+  // venta real nunca vuelve a desaparecer en silencio.
   for (let intento = 1; intento <= 5; intento++) {
     try {
-      const saleRef  = db.collection('sales').doc(String(sale.id));
-      const yaExiste = await withTimeout(saleRef.get(), 4000, 'verificar N° de venta');
-      if (yaExiste.exists) {
+      await withTimeout(db.runTransaction(async (tx) => {
+        const saleRef  = db.collection('sales').doc(String(sale.id));
+        const yaExiste = await tx.get(saleRef);
+        if (yaExiste.exists) {
+          const err = new Error('sale-id-taken');
+          err.colision = true;
+          throw err;
+        }
+        tx.set(saleRef, sale);
+        updatedProducts.forEach(p => tx.set(db.collection('products').doc(String(p.id)), p));
+        newMovimientos.forEach(m => tx.set(db.collection('movimientos').doc(String(m.id)), m));
+      }), 8000, 'guardar venta');
+      saveLocalData();
+      return;
+    } catch(e) {
+      if (e && e.colision) {
         console.warn(`N° de venta #${sale.id} ya estaba usado, se pide uno nuevo (intento ${intento})`);
         sale.id = await getNextSaleId();
         continue;
       }
-
-      const batch = db.batch();
-      batch.set(saleRef, sale);
-      updatedProducts.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
-      newMovimientos.forEach(m => batch.set(db.collection('movimientos').doc(String(m.id)), m));
-      await withTimeout(batch.commit(), 10000, 'guardar venta');
-      saveLocalData();
-      return;
-    } catch(e) {
       console.error('saveSale error:', e);
       addToOfflineQueue({ type: 'batch', items: [
         { type: 'set', col: 'sales',      id: String(sale.id), data: sale },
