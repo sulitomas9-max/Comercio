@@ -238,6 +238,7 @@ function initFirebase() {
   if (!firebase.apps.length) {
     firebase.initializeApp(config);
   }
+  _instalarSellos();
   db   = firebase.firestore();
   auth = firebase.auth();
 
@@ -360,6 +361,264 @@ async function getCollection(col) {
   return docs;
 }
 
+// ===== CARGA INCREMENTAL (para no bajar toda la base cada vez) =====
+//
+// Antes, cada vez que se abría la app se bajaban TODAS las ventas, TODOS
+// los movimientos, TODOS los productos, etc. Firebase cobra (y en el plan
+// gratis limita a 50.000 por día) cada documento leído, así que cada
+// apertura costaba decenas de miles de lecturas y el número crecía todos
+// los días junto con la base. Así se llegó a agotar la cuota diaria y
+// Firebase empezó a rechazar TODO, incluso guardar ventas.
+//
+// Ahora:
+//  1. Cada vez que la app escribe un documento le agrega un sello "_mt" con
+//     la hora del servidor de Firebase (se hace en un solo lugar, abajo en
+//     _instalarSellos, así no se escapa ninguna escritura). Cada vez que se
+//     borra algo se deja una marca en la colección "_borrados".
+//  2. Este dispositivo guarda una copia de lo que ya bajó (en IndexedDB, que
+//     aguanta mucho más que localStorage y no le quita lugar a la cola de
+//     ventas pendientes).
+//  3. Al abrir la app solo se piden a Firebase los documentos con sello
+//     posterior a lo que ya se tenía, más las marcas de borrado nuevas.
+//  4. Cada 7 días (o si la copia local falta o falla) se hace una carga
+//     completa, como red de seguridad.
+//  5. Las ventas de hoy y de ayer se piden SIEMPRE completas (son pocas),
+//     para que la caja nunca dependa de la copia local.
+
+const _SYNC_DB_NAME        = 'bazarhub_sync';
+const _SYNC_STORE          = 'cols';
+const _SYNC_SCHEMA         = 1;
+const _SYNC_BORRADOS_COL   = '_borrados';
+const _SYNC_FULL_EVERY_MS  = 7 * 24 * 60 * 60 * 1000;
+const _SYNC_MARGEN_MS      = 2 * 60 * 1000;
+// Hasta esta fecha se sigue haciendo carga completa: da tiempo a que todos
+// los dispositivos se cierren y se vuelvan a abrir con esta versión (una
+// pestaña vieja todavía abierta escribiría sin sello y la carga incremental
+// no vería esos cambios). La primera apertura después de esta fecha hace
+// una carga completa más y recién ahí empieza a ser incremental.
+const _SYNC_INCREMENTAL_DESDE = Date.parse('2026-09-30T07:00:00Z'); // 30/9 4:00 AM (Argentina)
+// Colecciones que se cargan de forma incremental. Las chicas (usuarios,
+// configuración, combos) se siguen bajando completas: son pocos documentos.
+const _SYNC_COLS = ['products', 'proveedores', 'sales', 'orders', 'movimientos',
+                    'ctacte', 'retiros', 'cajas', 'devoluciones'];
+
+// --- 1. Sellos en cada escritura ---
+
+function _sellar(ref, data) {
+  if (!ref || !ref.parent || ref.parent.id === _SYNC_BORRADOS_COL) return data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+  return { ...data, _mt: firebase.firestore.FieldValue.serverTimestamp() };
+}
+
+function _refMarcaBorrado(ref) {
+  // Solo colecciones de primer nivel (la app no usa subcolecciones).
+  if (!ref || !ref.parent || ref.parent.parent) return null;
+  if (ref.parent.id === _SYNC_BORRADOS_COL) return null;
+  return ref.firestore.collection(_SYNC_BORRADOS_COL).doc(ref.parent.id + '__' + ref.id);
+}
+
+function _instalarSellos() {
+  const fs = firebase.firestore;
+  if (fs.__bazarhubSellos) return;
+  const DR = fs.DocumentReference && fs.DocumentReference.prototype;
+  const WB = fs.WriteBatch && fs.WriteBatch.prototype;
+  const TX = fs.Transaction && fs.Transaction.prototype;
+  if (!DR || !WB || !TX) {
+    console.warn('[BazarHub] No se pudieron instalar los sellos de sincronización');
+    return;
+  }
+  fs.__bazarhubSellos = true;
+  const origDRset = DR.set, origWBset = WB.set, origWBdel = WB.delete;
+  const origTXset = TX.set, origTXdel = TX.delete;
+
+  DR.set = function (data, options) {
+    return options === undefined ? origDRset.call(this, _sellar(this, data))
+                                 : origDRset.call(this, _sellar(this, data), options);
+  };
+  WB.set = function (ref, data, options) {
+    return options === undefined ? origWBset.call(this, ref, _sellar(ref, data))
+                                 : origWBset.call(this, ref, _sellar(ref, data), options);
+  };
+  TX.set = function (ref, data, options) {
+    return options === undefined ? origTXset.call(this, ref, _sellar(ref, data))
+                                 : origTXset.call(this, ref, _sellar(ref, data), options);
+  };
+  WB.delete = function (ref) {
+    const r = origWBdel.call(this, ref);
+    const marca = _refMarcaBorrado(ref);
+    if (marca) origWBset.call(this, marca, { col: ref.parent.id, id: ref.id, _mt: fs.FieldValue.serverTimestamp() });
+    return r;
+  };
+  TX.delete = function (ref) {
+    const r = origTXdel.call(this, ref);
+    const marca = _refMarcaBorrado(ref);
+    if (marca) origTXset.call(this, marca, { col: ref.parent.id, id: ref.id, _mt: fs.FieldValue.serverTimestamp() });
+    return r;
+  };
+  // Un borrado suelto pasa a ser un lote chico: borrar + dejar la marca,
+  // todo junto (o las dos cosas o ninguna).
+  DR.delete = function () {
+    const b = this.firestore.batch();
+    b.delete(this);
+    return b.commit();
+  };
+}
+
+function _separarSello(raw) {
+  const data = { ...raw };
+  const mt = data._mt;
+  delete data._mt;
+  const t = (mt && typeof mt.toMillis === 'function') ? mt.toMillis() : 0;
+  return { data, t };
+}
+
+// --- 2. Copia local en IndexedDB ---
+
+let _syncDbPromise = null;
+
+function _syncDb() {
+  if (_syncDbPromise) return _syncDbPromise;
+  _syncDbPromise = withTimeout(new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') { reject(new Error('Sin IndexedDB')); return; }
+    const req = indexedDB.open(_SYNC_DB_NAME, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(_SYNC_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+    req.onblocked = () => reject(new Error('IndexedDB bloqueada'));
+  }), 4000, 'abrir copia local').catch(e => { _syncDbPromise = null; throw e; });
+  return _syncDbPromise;
+}
+
+async function _syncIdbGet(key) {
+  const idb = await _syncDb();
+  return withTimeout(new Promise((resolve, reject) => {
+    const req = idb.transaction(_SYNC_STORE, 'readonly').objectStore(_SYNC_STORE).get(key);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror   = () => reject(req.error);
+  }), 5000, 'leer copia local');
+}
+
+async function _syncIdbPut(key, value) {
+  const idb = await _syncDb();
+  return withTimeout(new Promise((resolve, reject) => {
+    const tx = idb.transaction(_SYNC_STORE, 'readwrite');
+    tx.objectStore(_SYNC_STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+    tx.onabort    = () => reject(tx.error || new Error('abortado'));
+  }), 10000, 'guardar copia local');
+}
+
+// --- 3. Sincronización ---
+
+let _syncCtxPromise = null;
+
+function _syncTsDesde(ms) {
+  return firebase.firestore.Timestamp.fromMillis(Math.max(0, (ms || 0) - _SYNC_MARGEN_MS));
+}
+
+function _syncCopiaValida(m) {
+  return !!(m && m.v === _SYNC_SCHEMA && m.docs && m.fullAt &&
+            m.fullAt >= _SYNC_INCREMENTAL_DESDE &&
+            Date.now() - m.fullAt < _SYNC_FULL_EVERY_MS);
+}
+
+// Lee las copias locales de todas las colecciones y las marcas de borrado
+// nuevas. Si algo de esto falla, se sigue igual pero con carga completa
+// (lo mismo que hacía la app antes), nunca con datos a medias.
+async function _iniciarSync() {
+  const mirrors = {};
+  _SYNC_COLS.forEach(c => { mirrors[c] = null; });
+  let borrados = [];
+  try {
+    await Promise.all(_SYNC_COLS.map(async c => {
+      try {
+        const m = await _syncIdbGet(c);
+        mirrors[c] = _syncCopiaValida(m) ? m : null;
+      } catch (e) {
+        mirrors[c] = null;
+      }
+    }));
+    const conCopia = _SYNC_COLS.filter(c => mirrors[c]);
+    if (conCopia.length) {
+      const desde = Math.min(...conCopia.map(c => mirrors[c].wmB || 0));
+      const snap = await withTimeout(
+        db.collection(_SYNC_BORRADOS_COL).where('_mt', '>', _syncTsDesde(desde)).get(),
+        10000, 'cargar borrados'
+      );
+      snap.forEach(d => {
+        const v = d.data();
+        const t = (v._mt && typeof v._mt.toMillis === 'function') ? v._mt.toMillis() : 0;
+        if (v.col && v.id != null) borrados.push({ col: v.col, id: String(v.id), t });
+      });
+    }
+  } catch (e) {
+    console.warn('[BazarHub] No se pudo usar la copia local, se hace carga completa:', e);
+    _SYNC_COLS.forEach(c => { mirrors[c] = null; });
+    borrados = [];
+  }
+  return { mirrors, borrados };
+}
+
+function _fechaStrDe(d) {
+  return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+}
+
+// Devuelve [{ id, data }] con el estado actual de la colección, pidiéndole a
+// Firebase solo lo que cambió desde la última vez (o todo, si hace falta).
+async function _syncCol(col) {
+  if (!_syncCtxPromise) _syncCtxPromise = _iniciarSync();
+  const ctx = await _syncCtxPromise;
+  const maxBorrado = ctx.borrados.reduce((mx, b) => Math.max(mx, b.t), 0);
+  const anterior = ctx.mirrors[col];
+  let m;
+  let hayCambios = true;
+
+  if (!anterior) {
+    // Carga completa
+    const snap = await db.collection(col).get();
+    const docs = {};
+    let wm = 0;
+    snap.forEach(d => {
+      const { data, t } = _separarSello(d.data());
+      docs[d.id] = { d: data, t };
+      if (t > wm) wm = t;
+    });
+    m = { v: _SYNC_SCHEMA, docs, wm, wmB: maxBorrado, fullAt: Date.now() };
+  } else {
+    // Solo lo nuevo o modificado
+    const consultas = [db.collection(col).where('_mt', '>', _syncTsDesde(anterior.wm)).get()];
+    if (col === 'sales') {
+      const hoy  = new Date();
+      const ayer = new Date(hoy.getTime() - 24 * 60 * 60 * 1000);
+      consultas.push(db.collection('sales').where('date', 'in', [_fechaStrDe(hoy), _fechaStrDe(ayer)]).get());
+    }
+    const snaps = await Promise.all(consultas);
+    const docs = { ...anterior.docs };
+    let wm = anterior.wm || 0;
+    let cambios = 0;
+    snaps.forEach(snap => snap.forEach(d => {
+      cambios++;
+      const { data, t } = _separarSello(d.data());
+      docs[d.id] = { d: data, t };
+      if (t > wm) wm = t;
+    }));
+    ctx.borrados.forEach(b => {
+      if (b.col !== col) return;
+      const cur = docs[b.id];
+      if (cur && (cur.t || 0) <= b.t) { delete docs[b.id]; cambios++; }
+    });
+    const wmB = Math.max(anterior.wmB || 0, maxBorrado);
+    m = { v: _SYNC_SCHEMA, docs, wm, wmB, fullAt: anterior.fullAt };
+    // Sin novedades: no hace falta volver a escribir la copia local entera.
+    hayCambios = cambios > 0 || wm !== anterior.wm || wmB !== anterior.wmB;
+  }
+
+  ctx.mirrors[col] = m;
+  if (hayCambios) _syncIdbPut(col, m).catch(e => console.warn('[BazarHub] No se pudo guardar la copia local de ' + col + ':', e));
+  return Object.keys(m.docs).map(id => ({ id, data: m.docs[id].d }));
+}
+
 // ===== CARGA DE USUARIOS (antes del login) =====
 
 function _loadUsersFromLocalStorage() {
@@ -380,7 +639,7 @@ async function loadUsersFromFirebase() {
   try {
     const snap = await withTimeout(db.collection('users').get(), 10000, 'cargar usuarios');
     store.users = [];
-    snap.forEach(d => store.users.push({ ...d.data(), id: d.id }));
+    snap.forEach(d => store.users.push({ ..._separarSello(d.data()).data, id: d.id }));
     const needsMigration = store.users.some(u => u.pass && !u.passHash);
     if (needsMigration) console.warn('[BazarHub] Hay usuarios con contraseñas en texto plano.');
   } catch(e) {
@@ -430,6 +689,8 @@ async function loadFromFirebase() {
 
   showLoadingOverlay(true);
   let loadedFresh = false;
+  // Una lectura nueva de copias locales + borrados por cada carga.
+  _syncCtxPromise = _iniciarSync();
   try {
     // Las ~11 colecciones son independientes entre sí (cada una llena su
     // propia parte de "store" y ninguna necesita el resultado de otra).
@@ -524,65 +785,65 @@ async function loadFromFirebase() {
 }
 
 async function _loadProducts() {
-  const snap = await db.collection('products').get();
+  const docs = await _syncCol('products');
   store.products = [];
-  if (snap.size > 0) {
-    snap.forEach(d => store.products.push({ ...d.data(), id: parseInt(d.id) }));
+  if (docs.length > 0) {
+    docs.forEach(d => store.products.push({ ...d.data, id: parseInt(d.id) }));
     store.nextProdId = Math.max(...store.products.map(p => p.id), 7) + 1;
   }
 }
 
 async function _loadProveedores() {
-  const snap = await db.collection('proveedores').get();
+  const docs = await _syncCol('proveedores');
   store.proveedores = [];
-  if (snap.size > 0) {
-    snap.forEach(d => store.proveedores.push({ ...d.data(), id: parseInt(d.id) }));
+  if (docs.length > 0) {
+    docs.forEach(d => store.proveedores.push({ ...d.data, id: parseInt(d.id) }));
     store.nextProvId = Math.max(...store.proveedores.map(p => p.id), 4) + 1;
   }
 }
 
 async function _loadSales() {
-  const snap = await db.collection('sales').get();
+  const docs = await _syncCol('sales');
   store.sales = [];
-  snap.forEach(d => store.sales.push({ ...d.data(), id: parseInt(d.id) }));
+  docs.forEach(d => store.sales.push({ ...d.data, id: parseInt(d.id) }));
   store.sales.sort((a, b) => a.id - b.id);
 }
 
 async function _loadOrders() {
-  const snap = await db.collection('orders').get();
+  const docs = await _syncCol('orders');
   store.orders = [];
-  snap.forEach(d => store.orders.push({ ...d.data(), id: parseInt(d.id) }));
+  docs.forEach(d => store.orders.push({ ...d.data, id: parseInt(d.id) }));
   store.nextOCId = store.orders.length ? Math.max(...store.orders.map(o => o.id), 0) + 1 : 1;
 }
 
 async function _loadMovimientos() {
-  const snap = await db.collection('movimientos').get();
+  const docs = await _syncCol('movimientos');
   store.movimientos = [];
-  snap.forEach(d => store.movimientos.push({ ...d.data(), id: parseInt(d.id) }));
+  docs.forEach(d => store.movimientos.push({ ...d.data, id: parseInt(d.id) }));
   store.movimientos.sort((a, b) => a.id - b.id);
 }
 
 async function _loadCtaCte() {
-  const snap = await db.collection('ctacte').get();
+  const docs = await _syncCol('ctacte');
   store.ctacteMovs = [];
-  snap.forEach(d => store.ctacteMovs.push({ ...d.data(), id: parseInt(d.id) }));
+  docs.forEach(d => store.ctacteMovs.push({ ...d.data, id: parseInt(d.id) }));
   store.nextCCId = store.ctacteMovs.length ? Math.max(...store.ctacteMovs.map(c => c.id), 0) + 1 : 1;
 }
 
 async function _loadRetiros() {
-  const snap = await db.collection('retiros').get();
+  const docs = await _syncCol('retiros');
   store.retiros = [];
-  snap.forEach(d => store.retiros.push({ ...d.data(), id: parseInt(d.id) }));
+  docs.forEach(d => store.retiros.push({ ...d.data, id: parseInt(d.id) }));
   store.nextRetiroId = store.retiros.length ? Math.max(...store.retiros.map(r => r.id), 0) + 1 : 1;
 }
 
 // FIX: _loadCajas restaura correctamente la caja abierta desde Firebase
 async function _loadCajas() {
-  const snap = await db.collection('cajas').get();
+  const docs = await _syncCol('cajas');
   store.cajaHistory = [];
-  snap.forEach(d => {
+  docs.forEach(d => {
     // FIX: JSON.parse/stringify elimina undefined antes de guardar en el store
-    const raw = d.data();
+    const raw = d.data;
     const data = {
       id:           parseInt(d.id),
       cajeroId:     raw.cajeroId     || '',
@@ -630,15 +891,15 @@ async function _loadCombos() {
   try {
     const snap = await db.collection('combos').get();
     store.combos = [];
-    snap.forEach(d => store.combos.push({ ...d.data(), id: d.id }));
+    snap.forEach(d => store.combos.push({ ..._separarSello(d.data()).data, id: d.id }));
   } catch(e) { store.combos = []; }
 }
 
 async function _loadDevoluciones() {
   try {
-    const snap = await db.collection('devoluciones').get();
+    const docs = await _syncCol('devoluciones');
     store.devoluciones = [];
-    snap.forEach(d => store.devoluciones.push({ ...d.data(), id: parseInt(d.id) }));
+    docs.forEach(d => store.devoluciones.push({ ...d.data, id: parseInt(d.id) }));
     store.nextDevId = store.devoluciones.length
       ? Math.max(...store.devoluciones.map(d => d.id), 0) + 1 : 1;
   } catch(e) { store.devoluciones = []; store.nextDevId = 1; }
