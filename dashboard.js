@@ -102,46 +102,58 @@ function calcMetrics() {
 }
 
 // ===== VENTA DEL DÍA EN VIVO (multi-dispositivo) =====
-// Consulta directamente Firebase (no store.sales, que solo se carga una vez
+// Escucha directamente Firebase (no store.sales, que solo se carga una vez
 // al iniciar sesión) para reflejar ventas hechas desde OTROS dispositivos
-// mientras el panel de administración está abierto. Se refresca solo, cada
-// LIVE_HOY_INTERVAL_MS, mientras estemos parados en la página de dashboard.
+// mientras el panel de administración está abierto.
+//
+// Antes esto volvía a pedir TODAS las ventas del día cada 20 segundos: con
+// ~100 ventas en el día eran ~18.000 lecturas por hora solo por tener el
+// panel abierto, y fue una de las causas de que se agotara la cuota diaria
+// de Firebase. Ahora se usa un "oyente" (onSnapshot): Firebase manda las
+// ventas del día UNA vez al abrir el panel y después solo avisa cuando una
+// venta cambia o se agrega (y cobra solo esas), así que se ve igual de en
+// vivo pero cuesta una fracción.
 
-const LIVE_HOY_INTERVAL_MS = 20000;
-let _liveHoyInterval = null;
+let _liveHoyUnsub    = null;  // función para cortar el oyente actual
+let _liveHoyFecha    = null;  // día ("d/m/aaaa") que está escuchando el oyente
+let _liveHoyDayCheck = null;  // chequeo liviano (sin lecturas) de cambio de día
 
 function _fechaHoyStr() {
   const now = new Date();
   return `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
 }
 
-async function _fetchVentasHoyLive() {
-  const el = document.getElementById('live-hoy-total');
-  if (!el) return; // el panel no está en pantalla (navegamos a otra página)
-  if (!db) return; // sin Firebase disponible (offline): no hay forma de ver otros dispositivos
+function _calcVentasHoyLive(snap) {
+  let total = 0, count = 0, cash = 0, transfer = 0, card = 0;
+  snap.forEach(d => {
+    const v = d.data();
+    if (v.anulada) return;
+    const t = v.total || 0;
+    total += t;
+    count++;
+    if (v.method === 'mixed') {
+      cash     += (v.paymentSplit && v.paymentSplit.cash)     || 0;
+      card     += (v.paymentSplit && v.paymentSplit.card)     || 0;
+      transfer += (v.paymentSplit && v.paymentSplit.transfer) || 0;
+    }
+    else if (v.method === 'cash')     cash     += t;
+    else if (v.method === 'transfer') transfer += t;
+    else if (v.method === 'card')     card     += t;
+  });
+  return { total, count, cash, transfer, card };
+}
 
+function _suscribirVentasHoyLive() {
+  if (_liveHoyUnsub) { try { _liveHoyUnsub(); } catch (e) {} _liveHoyUnsub = null; }
+  if (!db) return; // sin Firebase disponible (offline): no hay forma de ver otros dispositivos
+  _liveHoyFecha = _fechaHoyStr();
   try {
-    const hoy  = _fechaHoyStr();
-    const snap = await db.collection('sales').where('date', '==', hoy).get();
-    let total = 0, count = 0, cash = 0, transfer = 0, card = 0;
-    snap.forEach(d => {
-      const v = d.data();
-      if (v.anulada) return;
-      const t = v.total || 0;
-      total += t;
-      count++;
-      if (v.method === 'mixed') {
-        cash     += (v.paymentSplit && v.paymentSplit.cash)     || 0;
-        card     += (v.paymentSplit && v.paymentSplit.card)     || 0;
-        transfer += (v.paymentSplit && v.paymentSplit.transfer) || 0;
-      }
-      else if (v.method === 'cash')     cash     += t;
-      else if (v.method === 'transfer') transfer += t;
-      else if (v.method === 'card')     card     += t;
-    });
-    _renderVentasHoyLive({ total, count, cash, transfer, card });
-  } catch(e) {
-    console.warn('No se pudo actualizar la venta en vivo:', e);
+    _liveHoyUnsub = db.collection('sales').where('date', '==', _liveHoyFecha).onSnapshot(
+      snap => _renderVentasHoyLive(_calcVentasHoyLive(snap)),
+      err  => console.warn('No se pudo actualizar la venta en vivo:', err)
+    );
+  } catch (e) {
+    console.warn('No se pudo iniciar la venta en vivo:', e);
   }
 }
 
@@ -172,15 +184,17 @@ function _renderVentasHoyLive(m) {
 
 function startLiveVentasHoy() {
   stopLiveVentasHoy();
-  _fetchVentasHoyLive();
-  _liveHoyInterval = setInterval(_fetchVentasHoyLive, LIVE_HOY_INTERVAL_MS);
+  _suscribirVentasHoyLive();
+  // Si el panel queda abierto de un día para el otro, pasar a escuchar el
+  // día nuevo. Este chequeo no lee nada de Firebase.
+  _liveHoyDayCheck = setInterval(() => {
+    if (_fechaHoyStr() !== _liveHoyFecha) _suscribirVentasHoyLive();
+  }, 60000);
 }
 
 function stopLiveVentasHoy() {
-  if (_liveHoyInterval) {
-    clearInterval(_liveHoyInterval);
-    _liveHoyInterval = null;
-  }
+  if (_liveHoyUnsub) { try { _liveHoyUnsub(); } catch (e) {} _liveHoyUnsub = null; }
+  if (_liveHoyDayCheck) { clearInterval(_liveHoyDayCheck); _liveHoyDayCheck = null; }
 }
 
 // ===== VENTAS POR MES =====
@@ -1160,10 +1174,6 @@ async function anularVenta(saleId) {
   }
 }
 
-async function _loadDevoluciones() {
-  const snap = await db.collection('devoluciones').get();
-  store.devoluciones = [];
-  snap.forEach(d => store.devoluciones.push({ ...d.data(), id: parseInt(d.id) }));
-  store.nextDevId = store.devoluciones.length
-    ? Math.max(...store.devoluciones.map(d => d.id), 0) + 1 : 1;
-}
+// (_loadDevoluciones vive en firebase.js: antes había una copia acá que
+// pisaba a la de firebase.js y siempre volvía a bajar todas las
+// devoluciones completas, sin usar la carga incremental.)
