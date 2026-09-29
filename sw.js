@@ -14,7 +14,7 @@
  * pero bumpear la versión asegura una limpieza total de la caché vieja).
  */
 
-const CACHE_VERSION = 'bazarhub-shell-v16';
+const CACHE_VERSION = 'bazarhub-shell-v17';
 
 // Archivos propios del sitio (mismo origen) + librerías externas, con las
 // mismas versiones/URLs exactas que usa index.html hoy.
