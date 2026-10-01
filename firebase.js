@@ -157,6 +157,15 @@ function updateConnBadge() {
   if (!badge) return;
   const queue  = getOfflineQueue();
   const online = navigator.onLine;
+  if (online && typeof store !== 'undefined' && store._offlineFallbackShown) {
+    // Hay internet pero no se pudo cargar de Firebase: se están mostrando
+    // datos guardados en este dispositivo. Antes el cartel decía "Online"
+    // igual, y eso confundía (parecía que los datos eran los de ahora).
+    badge.className = 'conn-badge offline';
+    badge.innerHTML = '⚠ Datos guardados' + (queue.length ? ` · ${queue.length} pendiente${queue.length > 1 ? 's' : ''}` : '');
+    badge.title = 'No se pudo cargar de Firebase: se muestran datos guardados en este dispositivo.';
+    return;
+  }
   if (!online) {
     badge.className = 'conn-badge offline';
     badge.innerHTML = '● Sin WiFi' + (queue.length ? ` · ${queue.length} pendiente${queue.length > 1 ? 's' : ''}` : '');
@@ -714,87 +723,103 @@ async function loadFromFirebase() {
   }
 
   showLoadingOverlay(true);
-  let loadedFresh = false;
   // Una lectura nueva de copias locales + borrados por cada carga.
   _syncCtxPromise = _iniciarSync();
+
+  // Orden de carga: primero lo imprescindible para vender (caja, productos,
+  // usuarios...), que son pocos documentos y llegan rápido; después el
+  // historial (ventas, movimientos...), que la PRIMERA vez en un dispositivo
+  // son ~20.000 documentos y en un celular puede tardar más de un minuto.
+  // Antes todo iba mezclado y, si se pasaba del tiempo límite, la app tiraba
+  // lo que ya había llegado y mostraba la copia local (vieja): así aparecía
+  // "Caja cerrada" en el celular aunque hubiera una caja abierta.
+  const BATCH_SIZE = 4;
+  const tasks = [
+    ['cajas', _loadCajas],
+    ['configuración', _loadConfig],
+    ['usuarios', _loadUsers],
+    ['productos', _loadProducts],
+    ['combos', _loadCombos],
+    ['proveedores', _loadProveedores],
+    ['ventas', _loadSales],
+    ['devoluciones', _loadDevoluciones],
+    ['cuenta corriente', _loadCtaCte],
+    ['retiros', _loadRetiros],
+    ['pedidos', _loadOrders],
+    ['movimientos', _loadMovimientos],
+  ];
+  const cargadas = new Set();
+  store._historialPendiente = true;
+
+  const todo = (async () => {
+    const results = [];
+    for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+      const batch = tasks.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.allSettled(
+        batch.map(([label, fn]) => _loadCollectionWithRetry(fn, label).then(() => { cargadas.add(label); }))
+      );
+      results.push(...batchResults);
+    }
+    store._historialPendiente = false;
+    saveLocalData();
+    await syncOfflineQueue();
+    const failed = results
+      .map((r, i) => ({ ok: r.status === 'fulfilled', label: tasks[i][0] }))
+      .filter(x => !x.ok)
+      .map(x => x.label);
+    if (failed.length) {
+      console.error('[BazarHub] No se pudieron actualizar estas colecciones (se reintentó y siguió fallando):', failed);
+      toast(`No se pudo actualizar: ${failed.join(', ')}. El resto de los datos sí está al día.`, 'warn');
+    }
+    return failed;
+  })();
+
+  let loadedFresh = false;
+  let tardo = false;
   try {
-    // Las ~11 colecciones son independientes entre sí (cada una llena su
-    // propia parte de "store" y ninguna necesita el resultado de otra).
-    // Antes, con miles de ventas/movimientos ya cargados, cada colección
-    // sumaba su propio viaje de ida y vuelta a Firestore en fila (12
-    // esperas seguidas), y eso solo -sin ningún problema de conexión- ya
-    // tardaba muchos segundos.
-    //
-    // Se probó pedir las 12 al mismo tiempo (paralelo total), pero en una
-    // conexión floja (4G/5G o wifi con señal débil) eso hace que las 12
-    // compitan por el mismo ancho de banda a la vez: ninguna llega a tiempo
-    // y varias timeoutean juntas (justo lo que mostraba el toast "No se
-    // pudo actualizar: proveedores, ventas, pedidos..."). Las únicas que
-    // solían salvarse eran las colecciones chicas (productos, usuarios),
-    // que por su tamaño responden rápido incluso compitiendo por ancho de
-    // banda con las demás.
-    //
-    // Ahora se piden en TANDAS de a BATCH_SIZE en paralelo (no las 12 juntas,
-    // pero tampoco una por una): cada tanda espera a que termine antes de
-    // arrancar la siguiente, así nunca hay más de BATCH_SIZE pedidos
-    // compitiendo por la conexión al mismo tiempo, pero se sigue
-    // aprovechando el paralelismo dentro de cada tanda.
-    //
-    // Cada colección sigue teniendo su propio reintento (si falla, se
-    // prueba una vez más) y se usa Promise.allSettled en vez de Promise.all:
-    // una colección que sigue fallando después del reintento no tira abajo
-    // a las demás, que ya quedaron cargadas y actualizadas en "store".
-    //
-    // Sigue protegido además con un único límite de tiempo total: si
-    // Firestore se cuelga de verdad (conexión realmente caída, problema
-    // general del servicio, etc.), se corta todo y se usan los datos
-    // guardados localmente en vez de quedarse en "Cargando datos..." para
-    // siempre. Con tandas en vez de todo-junto, el peor caso tarda más
-    // (hasta 3 tandas en fila en vez de 1), así que el límite total también
-    // se subió de 25s a 45s para darle ese margen.
-    const BATCH_SIZE = 4;
-    await withTimeout((async () => {
-      const tasks = [
-        ['productos', _loadProducts],
-        ['proveedores', _loadProveedores],
-        ['ventas', _loadSales],
-        ['pedidos', _loadOrders],
-        ['movimientos', _loadMovimientos],
-        ['cuenta corriente', _loadCtaCte],
-        ['retiros', _loadRetiros],
-        ['cajas', _loadCajas],
-        ['configuración', _loadConfig],
-        ['usuarios', _loadUsers],
-        ['devoluciones', _loadDevoluciones],
-        ['combos', _loadCombos],
-      ];
+    // Hasta 40s esperando todo junto (en uso normal, con la carga
+    // incremental, tarda un par de segundos).
+    await withTimeout(todo, 40000, 'cargar datos del sistema');
+  } catch (e) {
+    tardo = true;
+    console.warn('[BazarHub] La carga se pasó de 40s:', e);
+  }
+  const esencialesOk = cargadas.has('cajas') && cargadas.has('productos') && cargadas.has('usuarios');
 
-      const results = [];
-      for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
-        const batch = tasks.slice(i, i + BATCH_SIZE);
-        const batchResults = await Promise.allSettled(
-          batch.map(([label, fn]) => _loadCollectionWithRetry(fn, label))
-        );
-        results.push(...batchResults);
-      }
-
-      saveLocalData();
-      await syncOfflineQueue();
-
-      const failed = results
-        .map((r, i) => ({ ok: r.status === 'fulfilled', label: tasks[i][0] }))
-        .filter(x => !x.ok)
-        .map(x => x.label);
-      if (failed.length) {
-        console.error('[BazarHub] No se pudieron actualizar estas colecciones (se reintentó y siguió fallando):', failed);
-        toast(`No se pudo actualizar: ${failed.join(', ')}. El resto de los datos sí está al día.`, 'warn');
-      }
-    })(), 90000, 'cargar datos del sistema');
+  if (esencialesOk && !tardo) {
     loadedFresh = true;
-  } catch(e) {
-    console.error('loadFromFirebase error:', e);
-    toast('Error cargando. Usando datos locales.', 'warn');
-    loadLocalData();
+  } else if (esencialesOk) {
+    // Lo imprescindible ya llegó de Firebase: se puede usar la app. El
+    // historial sigue bajando en segundo plano y al terminar se refresca
+    // la pantalla (y mientras tanto no se deja cerrar la caja).
+    toast('Terminando de cargar el historial… ya podés vender.', 'warn');
+    if (store._offlineFallbackShown) { store._offlineFallbackShown = false; updateConnBadge(); }
+    todo.then(() => {
+      toast('Datos actualizados', 'ok');
+      _rerenderPaginaActual();
+    }).catch(() => {});
+  } else {
+    // No llegó ni lo imprescindible (la caja, los productos o los
+    // usuarios): no se puede saber el estado real de la caja. Se muestran
+    // los datos guardados, avisando bien claro, y sin dejar cerrar la caja.
+    console.error('[BazarHub] No se pudieron cargar los datos esenciales de Firebase');
+    store._historialPendiente = true;
+    store._offlineFallbackShown = true;
+    const hasLocal = loadLocalData();
+    toast(hasLocal
+      ? 'No se pudo conectar con Firebase. Se muestran datos guardados: NO abras ni cierres la caja hasta que diga "Datos actualizados".'
+      : 'No se pudo conectar con Firebase.', 'err');
+    // Si la conexión termina respondiendo, se vuelve a cargar todo (ya
+    // incremental, rápido) para reemplazar los datos guardados. Solo si
+    // esta vez sí llegó todo: si Firebase sigue sin responder no se
+    // reintenta en bucle; se vuelve a probar al reabrir la app.
+    todo.then(failed => {
+      if (failed && failed.length) { store._historialPendiente = true; return; }
+      return loadFromFirebase().then(() => {
+        toast('Datos actualizados', 'ok');
+        _rerenderPaginaActual();
+      });
+    }).catch(() => {});
   }
 
   showLoadingOverlay(false);
@@ -806,7 +831,20 @@ async function loadFromFirebase() {
   // se sigue viendo información vieja.
   if (loadedFresh && store._offlineFallbackShown) {
     store._offlineFallbackShown = false;
+    updateConnBadge();
     toast('Reconectado. Datos actualizados.', 'ok');
+  }
+}
+
+// Vuelve a dibujar la página en la que está parado el usuario (después de
+// que terminan de llegar datos en segundo plano).
+function _rerenderPaginaActual() {
+  try {
+    if (!store.currentUser || typeof go !== 'function') return;
+    const act = document.querySelector('.page.act');
+    if (act && act.id && act.id.indexOf('page-') === 0) go(act.id.slice(5));
+  } catch (e) {
+    console.warn('No se pudo refrescar la pantalla:', e);
   }
 }
 
