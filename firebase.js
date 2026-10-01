@@ -157,13 +157,15 @@ function updateConnBadge() {
   if (!badge) return;
   const queue  = getOfflineQueue();
   const online = navigator.onLine;
+  badge.onclick = abrirDiagnosticoConexion;
+  badge.style.cursor = 'pointer';
   if (online && typeof store !== 'undefined' && store._offlineFallbackShown) {
     // Hay internet pero no se pudo cargar de Firebase: se están mostrando
     // datos guardados en este dispositivo. Antes el cartel decía "Online"
     // igual, y eso confundía (parecía que los datos eran los de ahora).
     badge.className = 'conn-badge offline';
     badge.innerHTML = '⚠ Datos guardados' + (queue.length ? ` · ${queue.length} pendiente${queue.length > 1 ? 's' : ''}` : '');
-    badge.title = 'No se pudo cargar de Firebase: se muestran datos guardados en este dispositivo.';
+    badge.title = 'No se pudo cargar de Firebase: se muestran datos guardados en este dispositivo. Tocá para ver qué pasó y repararlo.';
     return;
   }
   if (!online) {
@@ -287,6 +289,7 @@ function initFirebase() {
  * Solo después llama al callback.
  */
 function waitForFirebase(callback, tries = 0) {
+  if (!_reparacionLista) { setTimeout(() => waitForFirebase(callback, tries), 100); return; }
   if (typeof firebase === 'undefined' || !initFirebase()) {
     if (tries === 34) {
       // A los ~10s sin conexión: si hay datos guardados en este dispositivo
@@ -340,6 +343,7 @@ function _ensureAuth(callback) {
     })
     .catch(err => {
       console.error('Auth anónima falló:', err);
+      _diagRegistrar('autenticación', err);
       // Si falla la auth (ej. sin internet), intentar con caché local
       const hasLocal = loadLocalData();
       if (hasLocal) {
@@ -543,6 +547,18 @@ async function _syncIdbPut(key, value) {
 
 let _syncCtxPromise = null;
 
+// Cuando Firestore NO logra comunicarse con el servidor, una consulta .get()
+// no da error: devuelve una lista VACÍA "de caché" (metadata.fromCache). Si la
+// app la tomara por buena, mostraría todo vacío (por ejemplo "Caja cerrada"),
+// guardaría esa lista vacía como copia válida y pisaría la copia local buena.
+// Por eso, una respuesta que no viene del servidor se trata como un error.
+function _exigirServidor(snap, etiqueta) {
+  if (snap && snap.metadata && snap.metadata.fromCache) {
+    throw new Error('Sin respuesta del servidor (' + etiqueta + ')');
+  }
+  return snap;
+}
+
 function _syncTsDesde(ms) {
   return firebase.firestore.Timestamp.fromMillis(Math.max(0, (ms || 0) - _SYNC_MARGEN_MS));
 }
@@ -576,6 +592,7 @@ async function _iniciarSync() {
         db.collection(_SYNC_BORRADOS_COL).where('_mt', '>', _syncTsDesde(desde)).get(),
         10000, 'cargar borrados'
       );
+      _exigirServidor(snap, 'borrados');
       snap.forEach(d => {
         const v = d.data();
         const t = (v._mt && typeof v._mt.toMillis === 'function') ? v._mt.toMillis() : 0;
@@ -606,7 +623,7 @@ async function _syncCol(col) {
 
   if (!anterior) {
     // Carga completa
-    const snap = await db.collection(col).get();
+    const snap = _exigirServidor(await db.collection(col).get(), col);
     const docs = {};
     let wm = 0;
     snap.forEach(d => {
@@ -624,6 +641,7 @@ async function _syncCol(col) {
       consultas.push(db.collection('sales').where('date', 'in', [_fechaStrDe(hoy), _fechaStrDe(ayer)]).get());
     }
     const snaps = await Promise.all(consultas);
+    snaps.forEach(sn => _exigirServidor(sn, col));
     const docs = { ...anterior.docs };
     let wm = anterior.wm || 0;
     let cambios = 0;
@@ -667,7 +685,7 @@ async function loadUsersFromFirebase() {
     return;
   }
   try {
-    const snap = await withTimeout(db.collection('users').get(), 10000, 'cargar usuarios');
+    const snap = _exigirServidor(await withTimeout(db.collection('users').get(), 10000, 'cargar usuarios'), 'usuarios');
     store.users = [];
     snap.forEach(d => store.users.push({ ..._separarSello(d.data()).data, id: d.id }));
     const needsMigration = store.users.some(u => u.pass && !u.passHash);
@@ -704,11 +722,139 @@ async function _loadCollectionWithRetry(loadFn, label, attempts = 2) {
     }
   }
   console.error(`[BazarHub] "${label}" falló tras ${attempts} intentos:`, lastErr);
+  _diagRegistrar(label, lastErr);
   throw lastErr;
 }
 
+// ===== DIAGNÓSTICO DE CARGA + REPARACIÓN =====
+// Cuando la app no logra traer los datos de Firebase (se ve el cartel rojo
+// "Datos guardados"), tocar el cartel abre una ventana con el motivo exacto
+// y un botón para reparar. Reparar borra SOLO lo que se guarda en este
+// dispositivo para acelerar la carga (copia de datos, sesión anónima de
+// Firebase, caché de archivos); nunca toca las ventas pendientes de subir,
+// la copia de respaldo para trabajar sin conexión ni la sesión del usuario.
+
+function _diagRegistrar(etiqueta, err) {
+  try {
+    store._diagCarga = store._diagCarga || {};
+    store._diagCarga[etiqueta] = String((err && err.message) || err || 'error').slice(0, 160);
+  } catch (e) {}
+}
+
+function _diagEscapar(t) {
+  return String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function _diagTexto() {
+  const L = [];
+  const errores = store._diagCarga || {};
+  const ok = store._diagCargadas ? Array.from(store._diagCargadas) : [];
+  L.push('Internet del dispositivo: ' + (navigator.onLine ? 'sí' : 'NO'));
+  L.push('Firebase iniciado: ' + (db ? 'sí' : 'NO'));
+  try { L.push('Sesión Firebase: ' + (auth && auth.currentUser ? 'sí (' + String(auth.currentUser.uid).slice(0, 6) + ')' : 'NO')); } catch (e) {}
+  if (ok.length) L.push('Cargado bien: ' + ok.join(', '));
+  const fallas = Object.keys(errores);
+  if (fallas.length) fallas.forEach(k => L.push('Falló ' + k + ': ' + errores[k]));
+  else if (store._offlineFallbackShown) L.push('Sin detalle de error (la carga no terminó).');
+  try { if (navigator.connection) L.push('Red: ' + (navigator.connection.effectiveType || '?')); } catch (e) {}
+  L.push('Archivos: firebase.js v23 · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
+  return L.join('\n');
+}
+
+function abrirDiagnosticoConexion() {
+  let m = document.getElementById('modal-diag');
+  if (!m) {
+    m = document.createElement('div');
+    m.className = 'modal-bg';
+    m.id = 'modal-diag';
+    document.body.appendChild(m);
+  }
+  const cola = getOfflineQueue().length;
+  const mal = !!store._offlineFallbackShown;
+  m.innerHTML =
+    '<div class="modal">' +
+      '<div class="modal-title">' + (mal ? '⚠ No se pudieron cargar los datos' : '● Estado de la conexión') + '</div>' +
+      '<div style="font-size:13px;color:var(--txt2);margin-bottom:12px;line-height:1.45">' +
+        (mal
+          ? 'Se están mostrando datos guardados en este dispositivo, que pueden estar desactualizados. No abras ni cierres la caja hasta que se actualice.'
+          : 'Los datos están al día.') +
+        (cola ? '<br><b>Hay ' + cola + ' operación(es) pendiente(s) de subir</b> (no se borran al reparar).' : '') +
+      '</div>' +
+      '<pre style="font-size:11px;white-space:pre-wrap;word-break:break-word;background:var(--bg3);border-radius:8px;padding:10px;margin:0 0 12px;max-height:35vh;overflow:auto">' +
+        _diagEscapar(_diagTexto()) + '</pre>' +
+      '<div style="font-size:12px;color:var(--txt2);margin-bottom:4px"><b>Reparar</b> borra la copia guardada en este dispositivo y la vuelve a bajar de Firebase (la primera carga puede tardar). Las ventas pendientes de subir no se borran.</div>' +
+      '<div class="macts" style="flex-wrap:wrap">' +
+        '<button class="btn" id="diag-cerrar">Cerrar</button>' +
+        '<button class="btn" id="diag-reintentar">Reintentar</button>' +
+        '<button class="btn red" id="diag-reparar">Reparar</button>' +
+      '</div>' +
+    '</div>';
+  m.classList.add('on');
+  document.getElementById('diag-cerrar').onclick = () => m.classList.remove('on');
+  document.getElementById('diag-reintentar').onclick = () => {
+    m.classList.remove('on');
+    loadFromFirebase().then(() => _rerenderPaginaActual()).catch(() => {});
+  };
+  document.getElementById('diag-reparar').onclick = () => repararDatosLocales();
+}
+
+// Reparar = dejar una marca y recargar. Al arrancar de nuevo, ANTES de que
+// Firebase abra sus bases en IndexedDB, se borran (borrarlas con la app ya
+// andando puede quedar bloqueado por las conexiones abiertas).
+const _REPARAR_FLAG = 'bazarhub_reparar_pendiente';
+let _reparacionLista = true;
+
+function _ejecutarReparacionPendiente() {
+  try {
+    if (!localStorage.getItem(_REPARAR_FLAG)) return;
+    localStorage.removeItem(_REPARAR_FLAG);
+  } catch (e) { return; }
+  _reparacionLista = false;
+  const terminar = () => { _reparacionLista = true; };
+  (async () => {
+    const nombres = new Set([_SYNC_DB_NAME, 'firebaseLocalStorageDb']);
+    try {
+      if (indexedDB.databases) {
+        (await indexedDB.databases()).forEach(d => {
+          if (d.name && (d.name.indexOf('firestore/') === 0 || d.name.indexOf('firebase') === 0)) nombres.add(d.name);
+        });
+      }
+    } catch (e) {}
+    await Promise.all(Array.from(nombres).map(n => new Promise(res => {
+      try {
+        const r = indexedDB.deleteDatabase(n);
+        r.onsuccess = r.onerror = r.onblocked = () => res();
+      } catch (e) { res(); }
+      setTimeout(res, 4000);
+    })));
+  })().then(terminar, terminar);
+  setTimeout(terminar, 8000);
+}
+_ejecutarReparacionPendiente();
+
+async function repararDatosLocales() {
+  const btn = document.getElementById('diag-reparar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Reparando…'; }
+  const paso = async (fn) => { try { await withTimeout(Promise.resolve().then(fn), 4000, 'reparar'); } catch (e) {} };
+
+  try { localStorage.setItem(_REPARAR_FLAG, '1'); } catch (e) {}
+  // Service worker y caché de archivos (se vuelven a bajar de la red).
+  await paso(async () => {
+    if ('serviceWorker' in navigator) (await navigator.serviceWorker.getRegistrations()).forEach(r => r.unregister());
+  });
+  await paso(async () => {
+    if (window.caches) (await caches.keys()).forEach(k => caches.delete(k));
+  });
+  try { localStorage.removeItem('bazarhub_idb_cleaned_v1'); } catch (e) {}
+  // NO se tocan: cola de operaciones pendientes, copia de respaldo sin
+  // conexión (OFFLINE_DATA_KEY) ni la sesión del usuario.
+  location.reload();
+}
+
 async function loadFromFirebase() {
+  store._diagCarga = {};
   if (!db || !navigator.onLine) {
+    _diagRegistrar('inicio', !db ? 'Firebase no inicializado' : 'Sin conexión a internet');
     const hasLocal = loadLocalData();
     if (hasLocal) {
       store._offlineFallbackShown = true;
@@ -749,6 +895,7 @@ async function loadFromFirebase() {
     ['movimientos', _loadMovimientos],
   ];
   const cargadas = new Set();
+  store._diagCargadas = cargadas;
   store._historialPendiente = true;
 
   const todo = (async () => {
@@ -761,12 +908,14 @@ async function loadFromFirebase() {
       results.push(...batchResults);
     }
     store._historialPendiente = false;
-    saveLocalData();
-    await syncOfflineQueue();
     const failed = results
       .map((r, i) => ({ ok: r.status === 'fulfilled', label: tasks[i][0] }))
       .filter(x => !x.ok)
       .map(x => x.label);
+    // Solo se actualiza la copia local si TODO llegó bien: con una carga
+    // incompleta se pisaría la copia buena con listas vacías.
+    if (!failed.length) saveLocalData();
+    await syncOfflineQueue();
     if (failed.length) {
       console.error('[BazarHub] No se pudieron actualizar estas colecciones (se reintentó y siguió fallando):', failed);
       toast(`No se pudo actualizar: ${failed.join(', ')}. El resto de los datos sí está al día.`, 'warn');
@@ -783,6 +932,7 @@ async function loadFromFirebase() {
   } catch (e) {
     tardo = true;
     console.warn('[BazarHub] La carga se pasó de 40s:', e);
+    _diagRegistrar('tiempo', 'la carga superó los 40 segundos');
   }
   const esencialesOk = cargadas.has('cajas') && cargadas.has('productos') && cargadas.has('usuarios');
 
@@ -807,7 +957,7 @@ async function loadFromFirebase() {
     store._offlineFallbackShown = true;
     const hasLocal = loadLocalData();
     toast(hasLocal
-      ? 'No se pudo conectar con Firebase. Se muestran datos guardados: NO abras ni cierres la caja hasta que diga "Datos actualizados".'
+      ? 'No se pudo conectar con Firebase. Se muestran datos guardados: NO abras ni cierres la caja hasta que diga "Datos actualizados". Tocá el cartel rojo de arriba para ver qué pasó y repararlo.'
       : 'No se pudo conectar con Firebase.', 'err');
     // Si la conexión termina respondiendo, se vuelve a cargar todo (ya
     // incremental, rápido) para reemplazar los datos guardados. Solo si
@@ -952,11 +1102,12 @@ async function _loadUsers() {
 }
 
 async function _loadCombos() {
-  try {
-    const snap = await db.collection('combos').get();
-    store.combos = [];
-    snap.forEach(d => store.combos.push({ ..._separarSello(d.data()).data, id: d.id }));
-  } catch(e) { store.combos = []; }
+  let snap;
+  try { snap = await db.collection('combos').get(); }
+  catch(e) { store.combos = []; return; }
+  _exigirServidor(snap, 'combos');
+  store.combos = [];
+  snap.forEach(d => store.combos.push({ ..._separarSello(d.data()).data, id: d.id }));
 }
 
 async function _loadDevoluciones() {
