@@ -229,6 +229,10 @@ async function abrirCaja() {
 
 function openCerrarCaja() {
   if (!store.cajaAbierta) return;
+  if (store._historialPendiente) {
+    toast('Todavía se están cargando las ventas del sistema. Esperá unos segundos y probá de nuevo para cerrar la caja.', 'warn');
+    return;
+  }
   const ventasEf       = calcVentasEfCaja();
   const ventasTransfer = calcVentasMetodoCaja('transfer');
   const ventasTarjeta  = calcVentasMetodoCaja('card');
@@ -265,6 +269,10 @@ function calcDiferenciaCierre() {
 }
 
 async function cerrarCaja() {
+  if (store._historialPendiente) {
+    toast('Todavía se están cargando las ventas del sistema. Esperá unos segundos y probá de nuevo para cerrar la caja.', 'warn');
+    return;
+  }
   if (!store.cajaAbierta) return;
   const ventasEf       = calcVentasEfCaja();
   const ventasTransfer = calcVentasMetodoCaja('transfer');
