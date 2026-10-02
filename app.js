@@ -465,9 +465,11 @@ async function doLogin() {
     if (!store.usersReady) {
       errEl.textContent = 'Cargando datos, esperá un momento...';
       errEl.style.display = 'block';
-      const ready = await _waitUsersReady(20000);
+      const ready = await _waitUsersReady(45000);
       if (!ready) {
-        errEl.textContent = 'No se pudo conectar. Revisá tu conexión e intentá de nuevo.';
+        let motivo = '';
+        try { motivo = typeof _diagResumen === 'function' ? ' (' + _diagResumen() + ')' : ''; } catch (e) {}
+        errEl.textContent = 'No se pudo conectar' + motivo + '. Sigo intentando solo: esperá unos segundos y tocá Entrar de nuevo.';
         errEl.style.display = 'block';
         return;
       }
@@ -1003,7 +1005,15 @@ async function changeAdminPass() {
   // Cargamos usuarios desde Firebase antes de mostrar el login
   waitForFirebase(async () => {
     loadDrafts();
-    await loadUsersFromFirebase();
+    let usuariosDelServidor = await loadUsersFromFirebase();
+    // Si no se pudo traer la lista del servidor y tampoco hay copia local,
+    // NO se puede asumir que "no hay usuarios" (eso mostraría la configuración
+    // inicial y podría pisar la cuenta de administrador): se reintenta.
+    for (let i = 0; i < 40 && !usuariosDelServidor && store.users.length === 0; i++) {
+      await new Promise(r => setTimeout(r, 4000));
+      usuariosDelServidor = await loadUsersFromFirebase();
+    }
+    if (!usuariosDelServidor && store.users.length === 0) return;
     store.usersReady = true;
     if (store.users.length === 0) {
       showSetupWizard();
