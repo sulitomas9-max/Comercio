@@ -814,7 +814,7 @@ function _diagTexto() {
   if (fallas.length) fallas.forEach(k => L.push('Falló ' + k + ': ' + errores[k]));
   else if (store._offlineFallbackShown) L.push('Sin detalle de error (la carga no terminó).');
   try { if (navigator.connection) L.push('Red: ' + (navigator.connection.effectiveType || '?')); } catch (e) {}
-  L.push('Archivos: firebase.js v25 · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
+  L.push('Archivos: firebase.js v26 · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
   return L.join('\n');
 }
 
@@ -888,43 +888,6 @@ function _ejecutarReparacionPendiente() {
   setTimeout(terminar, 8000);
 }
 _ejecutarReparacionPendiente();
-
-// Reparación AUTOMÁTICA: si hay internet de verdad (se prueba aparte de
-// Firebase) pero igual no se pudieron cargar los datos esenciales, el problema
-// son los datos guardados trabados en este dispositivo: se repara sola, sin
-// que nadie tenga que tocar nada. Salvaguardas:
-//  - Sin internet real NO se repara (borrar cosas no ayudaría).
-//  - Máximo 2 intentos cada 30 minutos (el 1.º borra solo las bases de datos
-//    guardadas; el 2.º también el service worker y la caché de archivos).
-//  - Nunca toca las ventas pendientes, la copia de respaldo sin conexión ni
-//    la sesión del usuario.
-const _AUTOREPARAR_KEY = 'bazarhub_autoreparar';
-
-async function _hayInternetReal() {
-  try {
-    await withTimeout(fetch('https://www.gstatic.com/generate_204', { mode: 'no-cors', cache: 'no-store' }), 5000, 'probar internet');
-    return true;
-  } catch (e) { return false; }
-}
-
-async function _autoReparar() {
-  try {
-    if (!navigator.onLine) return false;
-    if (!(await _hayInternetReal())) return false;
-    let st = { t: 0, n: 0 };
-    try { st = JSON.parse(localStorage.getItem(_AUTOREPARAR_KEY) || 'null') || st; } catch (e) {}
-    const ahora = Date.now();
-    if (ahora - st.t > 30 * 60 * 1000) st = { t: ahora, n: 0 };
-    if (st.n >= 2) return false;
-    st.n++;
-    localStorage.setItem(_AUTOREPARAR_KEY, JSON.stringify(st));
-    _diagRegistrar('reparación automática', 'intento ' + st.n + ' de 2');
-    toast('Los datos guardados en este dispositivo se trabaron. Reparando solo, un momento…', 'warn');
-    await new Promise(r => setTimeout(r, 1500));
-    repararDatosLocales(st.n >= 2);
-    return true;
-  } catch (e) { return false; }
-}
 
 async function repararDatosLocales(completo = true) {
   const btn = document.getElementById('diag-reparar');
@@ -1057,7 +1020,6 @@ async function loadFromFirebase() {
     toast(hasLocal
       ? 'No se pudo conectar con Firebase. Se muestran datos guardados: NO abras ni cierres la caja hasta que diga "Datos actualizados". Tocá el cartel rojo de arriba para ver qué pasó y repararlo.'
       : 'No se pudo conectar con Firebase.', 'err');
-    _autoReparar();
     // Si la conexión termina respondiendo, se vuelve a cargar todo (ya
     // incremental, rápido) para reemplazar los datos guardados. Solo si
     // esta vez sí llegó todo: si Firebase sigue sin responder no se
