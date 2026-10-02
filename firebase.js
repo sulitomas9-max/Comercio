@@ -423,7 +423,11 @@ const _SYNC_DB_NAME        = 'bazarhub_sync';
 const _SYNC_STORE          = 'cols';
 const _SYNC_SCHEMA         = 1;
 const _SYNC_BORRADOS_COL   = '_borrados';
-const _SYNC_FULL_EVERY_MS  = 7 * 24 * 60 * 60 * 1000;
+// Recarga completa de seguridad cada 30 días por dispositivo (antes 7). Desde
+// que todos los dispositivos usan el código nuevo, toda escritura lleva sello,
+// así que la carga incremental ya no se pierde cambios; esta recarga queda solo
+// como red de seguridad y cada una cuesta ~20.000 lecturas por dispositivo.
+const _SYNC_FULL_EVERY_MS  = 30 * 24 * 60 * 60 * 1000;
 const _SYNC_MARGEN_MS      = 2 * 60 * 1000;
 // Hasta esta fecha se sigue haciendo carga completa: da tiempo a que todos
 // los dispositivos se cierren y se vuelvan a abrir con esta versión (una
@@ -757,7 +761,7 @@ function _diagTexto() {
   if (fallas.length) fallas.forEach(k => L.push('Falló ' + k + ': ' + errores[k]));
   else if (store._offlineFallbackShown) L.push('Sin detalle de error (la carga no terminó).');
   try { if (navigator.connection) L.push('Red: ' + (navigator.connection.effectiveType || '?')); } catch (e) {}
-  L.push('Archivos: firebase.js v23 · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
+  L.push('Archivos: firebase.js v24 · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
   return L.join('\n');
 }
 
@@ -832,19 +836,60 @@ function _ejecutarReparacionPendiente() {
 }
 _ejecutarReparacionPendiente();
 
-async function repararDatosLocales() {
+// Reparación AUTOMÁTICA: si hay internet de verdad (se prueba aparte de
+// Firebase) pero igual no se pudieron cargar los datos esenciales, el problema
+// son los datos guardados trabados en este dispositivo: se repara sola, sin
+// que nadie tenga que tocar nada. Salvaguardas:
+//  - Sin internet real NO se repara (borrar cosas no ayudaría).
+//  - Máximo 2 intentos cada 30 minutos (el 1.º borra solo las bases de datos
+//    guardadas; el 2.º también el service worker y la caché de archivos).
+//  - Nunca toca las ventas pendientes, la copia de respaldo sin conexión ni
+//    la sesión del usuario.
+const _AUTOREPARAR_KEY = 'bazarhub_autoreparar';
+
+async function _hayInternetReal() {
+  try {
+    await withTimeout(fetch('https://www.gstatic.com/generate_204', { mode: 'no-cors', cache: 'no-store' }), 5000, 'probar internet');
+    return true;
+  } catch (e) { return false; }
+}
+
+async function _autoReparar() {
+  try {
+    if (!navigator.onLine) return false;
+    if (!(await _hayInternetReal())) return false;
+    let st = { t: 0, n: 0 };
+    try { st = JSON.parse(localStorage.getItem(_AUTOREPARAR_KEY) || 'null') || st; } catch (e) {}
+    const ahora = Date.now();
+    if (ahora - st.t > 30 * 60 * 1000) st = { t: ahora, n: 0 };
+    if (st.n >= 2) return false;
+    st.n++;
+    localStorage.setItem(_AUTOREPARAR_KEY, JSON.stringify(st));
+    _diagRegistrar('reparación automática', 'intento ' + st.n + ' de 2');
+    toast('Los datos guardados en este dispositivo se trabaron. Reparando solo, un momento…', 'warn');
+    await new Promise(r => setTimeout(r, 1500));
+    repararDatosLocales(st.n >= 2);
+    return true;
+  } catch (e) { return false; }
+}
+
+async function repararDatosLocales(completo = true) {
   const btn = document.getElementById('diag-reparar');
   if (btn) { btn.disabled = true; btn.textContent = 'Reparando…'; }
   const paso = async (fn) => { try { await withTimeout(Promise.resolve().then(fn), 4000, 'reparar'); } catch (e) {} };
 
   try { localStorage.setItem(_REPARAR_FLAG, '1'); } catch (e) {}
-  // Service worker y caché de archivos (se vuelven a bajar de la red).
-  await paso(async () => {
-    if ('serviceWorker' in navigator) (await navigator.serviceWorker.getRegistrations()).forEach(r => r.unregister());
-  });
-  await paso(async () => {
-    if (window.caches) (await caches.keys()).forEach(k => caches.delete(k));
-  });
+  // Service worker y caché de archivos (se vuelven a bajar de la red). La
+  // reparación automática de primer intento los deja, para no perder la app
+  // si justo falla la conexión.
+  if (completo) {
+    await paso(async () => {
+      if ('serviceWorker' in navigator) (await navigator.serviceWorker.getRegistrations()).forEach(r => r.unregister());
+    });
+    await paso(async () => {
+      if (window.caches) (await caches.keys()).forEach(k => caches.delete(k));
+    });
+  }
   try { localStorage.removeItem('bazarhub_idb_cleaned_v1'); } catch (e) {}
   // NO se tocan: cola de operaciones pendientes, copia de respaldo sin
   // conexión (OFFLINE_DATA_KEY) ni la sesión del usuario.
@@ -959,6 +1004,7 @@ async function loadFromFirebase() {
     toast(hasLocal
       ? 'No se pudo conectar con Firebase. Se muestran datos guardados: NO abras ni cierres la caja hasta que diga "Datos actualizados". Tocá el cartel rojo de arriba para ver qué pasó y repararlo.'
       : 'No se pudo conectar con Firebase.', 'err');
+    _autoReparar();
     // Si la conexión termina respondiendo, se vuelve a cargar todo (ya
     // incremental, rápido) para reemplazar los datos guardados. Solo si
     // esta vez sí llegó todo: si Firebase sigue sin responder no se
