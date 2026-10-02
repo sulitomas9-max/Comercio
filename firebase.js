@@ -257,8 +257,10 @@ window.addEventListener('offline', () => { updateConnBadge(); });
 // ===== FIREBASE INIT + AUTH ANÓNIMA =====
 
 function initFirebase() {
-  if (typeof firebase === 'undefined') {
-    console.error('Firebase SDK no cargado');
+  if (typeof firebase === 'undefined' || !firebase.initializeApp || !firebase.firestore || !firebase.auth) {
+    // Falta el SDK (o parte): pasa si el celular no logró bajar alguno de los
+    // 3 archivos de Google al abrir. waitForFirebase intenta bajarlos de nuevo.
+    console.error('Firebase SDK no cargado (completo)');
     return false;
   }
   if (db) return true;
@@ -288,9 +290,39 @@ function initFirebase() {
  * Espera a que Firebase esté listo Y el usuario esté autenticado anónimamente.
  * Solo después llama al callback.
  */
+// Si al abrir la app no se bajó alguno de los 3 archivos del SDK de Firebase
+// (señal floja de celular), antes la app quedaba muerta hasta recargar a mano.
+// Ahora se vuelven a pedir solos, de a uno, con otro parámetro para saltear
+// cualquier respuesta rota que haya quedado guardada.
+let _sdkReintentando = false;
+function _cargarSdkFaltante() {
+  if (_sdkReintentando) return;
+  _sdkReintentando = true;
+  const base = 'https://www.gstatic.com/firebasejs/9.23.0/';
+  const pasos = [
+    ['firebase-app-compat.js',       () => typeof firebase !== 'undefined' && !!firebase.initializeApp],
+    ['firebase-firestore-compat.js', () => typeof firebase !== 'undefined' && !!firebase.firestore],
+    ['firebase-auth-compat.js',      () => typeof firebase !== 'undefined' && !!firebase.auth],
+  ];
+  _diagRegistrar('SDK de Firebase', 'faltaba, se pidió de nuevo');
+  (async () => {
+    for (const [archivo, estaOk] of pasos) {
+      if (estaOk()) continue;
+      await new Promise(res => {
+        const sc = document.createElement('script');
+        sc.src = base + archivo + '?r=' + Date.now();
+        sc.onload = sc.onerror = () => res();
+        document.head.appendChild(sc);
+        setTimeout(res, 15000);
+      });
+    }
+  })().then(() => { _sdkReintentando = false; }, () => { _sdkReintentando = false; });
+}
+
 function waitForFirebase(callback, tries = 0) {
   if (!_reparacionLista) { setTimeout(() => waitForFirebase(callback, tries), 100); return; }
   if (typeof firebase === 'undefined' || !initFirebase()) {
+    if (tries === 25 || (tries > 25 && tries % 20 === 0)) _cargarSdkFaltante();
     if (tries === 34) {
       // A los ~10s sin conexión: si hay datos guardados en este dispositivo
       // los usamos para no dejar a la persona colgada, pero seguimos
@@ -328,7 +360,7 @@ function waitForFirebase(callback, tries = 0) {
  * Si ya hay sesión activa, llama al callback directo.
  * Si no, hace signInAnonymously y espera.
  */
-function _ensureAuth(callback) {
+function _ensureAuth(callback, intento = 0) {
   if (auth.currentUser) {
     callback();
     return;
@@ -351,6 +383,12 @@ function _ensureAuth(callback) {
         toast('Sin conexión. Usando datos guardados localmente.', 'warn');
         updateConnBadge();
         callback();
+      } else if (intento < 12) {
+        // Sin copia local reciente no hay con qué trabajar: antes se mostraba
+        // el error UNA vez y la app quedaba muerta hasta recargar a mano, aunque
+        // la señal volviera a los 5 segundos. Ahora se reintenta sola.
+        if (intento === 0) toast('Conectando con el servidor… un momento.', 'warn');
+        setTimeout(() => _ensureAuth(callback, intento + 1), intento < 3 ? 3000 : 8000);
       } else {
         toast('Error de autenticación con Firebase.', 'err');
         showLoadingOverlay(false);
@@ -683,10 +721,11 @@ function _loadUsersFromLocalStorage() {
   } catch(e) {}
 }
 
+// Devuelve true solo si la lista de usuarios vino REALMENTE del servidor.
 async function loadUsersFromFirebase() {
   if (!db || !auth.currentUser) {
     _loadUsersFromLocalStorage();
-    return;
+    return false;
   }
   try {
     const snap = _exigirServidor(await withTimeout(db.collection('users').get(), 10000, 'cargar usuarios'), 'usuarios');
@@ -694,9 +733,12 @@ async function loadUsersFromFirebase() {
     snap.forEach(d => store.users.push({ ..._separarSello(d.data()).data, id: d.id }));
     const needsMigration = store.users.some(u => u.pass && !u.passHash);
     if (needsMigration) console.warn('[BazarHub] Hay usuarios con contraseñas en texto plano.');
+    return true;
   } catch(e) {
     console.error('loadUsersFromFirebase error:', e);
+    _diagRegistrar('usuarios', e);
     _loadUsersFromLocalStorage();
+    return false;
   }
 }
 
@@ -745,6 +787,17 @@ function _diagRegistrar(etiqueta, err) {
   } catch (e) {}
 }
 
+// Una línea con el motivo más probable de que no conecte (para el login).
+function _diagResumen() {
+  try {
+    const e = store._diagCarga || {};
+    const k = ['SDK de Firebase', 'autenticación', 'usuarios'].find(x => e[x]);
+    if (!navigator.onLine) return 'el dispositivo no tiene internet';
+    if (k) return k + ': ' + e[k];
+  } catch (x) {}
+  return 'sin respuesta del servidor';
+}
+
 function _diagEscapar(t) {
   return String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
@@ -761,7 +814,7 @@ function _diagTexto() {
   if (fallas.length) fallas.forEach(k => L.push('Falló ' + k + ': ' + errores[k]));
   else if (store._offlineFallbackShown) L.push('Sin detalle de error (la carga no terminó).');
   try { if (navigator.connection) L.push('Red: ' + (navigator.connection.effectiveType || '?')); } catch (e) {}
-  L.push('Archivos: firebase.js v24 · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
+  L.push('Archivos: firebase.js v25 · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
   return L.join('\n');
 }
 
