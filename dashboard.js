@@ -143,17 +143,125 @@ function _calcVentasHoyLive(snap) {
   return { total, count, cash, transfer, card };
 }
 
+// ----- v27: el panel parte de las ventas que la app YA tiene cargadas -----
+// Antes, cada vez que se entraba al panel se volvían a leer TODAS las ventas
+// del día (~100-200 lecturas por entrada). Ahora se arma el total con las
+// ventas ya cargadas (store.sales) y el oyente pide solo las que cambiaron
+// o se agregaron DESPUÉS de la última carga (marca `_mt`). Al volver a
+// entrar al panel no se vuelve a leer nada que ya se haya visto.
+// Si no se puede confiar en lo cargado (sin conexión, carga incompleta,
+// interruptor v27 apagado) se usa el método de antes, tal cual.
+// Limitación: una venta hecha desde una pestaña MUY vieja (anterior al 30/9,
+// que escribe sin sello `_mt`) no aparece en vivo hasta la próxima carga o
+// hasta tocar "↻ Recalcular".
+let _liveHoyMap      = null;  // Map: N° de venta -> datos (solo del día en curso)
+let _liveHoyMapFecha = null;  // día al que corresponde el mapa
+let _liveHoyBase     = null;  // el store.sales del que salió el mapa
+let _liveHoyWm       = 0;     // estamos al día hasta esta marca _mt (ms)
+let _liveHoyModo     = '';    // 'incremental' | 'completo' (para diagnóstico)
+
+function _liveHoyMarcaBase() {
+  try {
+    if (typeof _v27Activo !== 'function' || !_v27Activo()) return 0;
+    if (store._historialPendiente || store._offlineFallbackShown) return 0;
+    if (!Array.isArray(store.sales)) return 0;
+    return (typeof _syncMarca === 'object' && _syncMarca.sales) ? _syncMarca.sales : 0;
+  } catch (e) { return 0; }
+}
+
+function _liveHoyPrepararMapa() {
+  const hoy = _fechaHoyStr();
+  if (_liveHoyMap && _liveHoyMapFecha === hoy && _liveHoyBase === store.sales) return true;
+  const marca = _liveHoyMarcaBase();
+  if (!marca) return false;
+  const mapa = new Map();
+  store.sales.forEach(v => { if (v.date === hoy) mapa.set(v.id, v); });
+  _liveHoyMap = mapa; _liveHoyMapFecha = hoy; _liveHoyBase = store.sales;
+  _liveHoyWm = marca;
+  return true;
+}
+
+function _liveHoyPseudoSnap() {
+  return { forEach: fn => _liveHoyMap.forEach(v => fn({ data: () => v })) };
+}
+
+function _liveHoyAplicar(snap, primera) {
+  let leidas = 0;
+  snap.docChanges().forEach(ch => {
+    const id = parseInt(ch.doc.id);
+    if (!ch.doc.metadata.hasPendingWrites) leidas++;
+    if (ch.type === 'removed') { _liveHoyMap.delete(id); return; }
+    const { data, t } = _separarSello(ch.doc.data());
+    if (t > _liveHoyWm) _liveHoyWm = t;
+    if (data.date === _liveHoyMapFecha) _liveHoyMap.set(id, data); else _liveHoyMap.delete(id);
+  });
+  if (!(snap.metadata && snap.metadata.fromCache)) _contarLecturas('panel', primera ? Math.max(1, leidas) : leidas);
+}
+
 function _suscribirVentasHoyLive() {
   if (_liveHoyUnsub) { try { _liveHoyUnsub(); } catch (e) {} _liveHoyUnsub = null; }
   if (!db) return; // sin Firebase disponible (offline): no hay forma de ver otros dispositivos
   _liveHoyFecha = _fechaHoyStr();
+
+  let adoptado = false;
+  try { adoptado = _liveHoyPrepararMapa(); } catch (e) { adoptado = false; }
+  if (adoptado) {
+    try {
+      _liveHoyModo = 'incremental';
+      _renderVentasHoyLive(_calcVentasHoyLive(_liveHoyPseudoSnap()));
+      const margen = (typeof _SYNC_MARGEN_MS === 'number') ? _SYNC_MARGEN_MS : 120000;
+      const desde = firebase.firestore.Timestamp.fromMillis(Math.max(0, _liveHoyWm - margen));
+      let primera = true;
+      _liveHoyUnsub = db.collection('sales').where('_mt', '>', desde).onSnapshot(
+        snap => {
+          try { _liveHoyAplicar(snap, primera); } finally { primera = false; }
+          _renderVentasHoyLive(_calcVentasHoyLive(_liveHoyPseudoSnap()));
+        },
+        err => console.warn('No se pudo actualizar la venta en vivo:', err)
+      );
+      return;
+    } catch (e) {
+      console.warn('Panel incremental no disponible, se usa el método completo:', e);
+      if (_liveHoyUnsub) { try { _liveHoyUnsub(); } catch (x) {} _liveHoyUnsub = null; }
+    }
+  }
+
+  // Método de siempre: escuchar todas las ventas del día.
+  _liveHoyModo = 'completo';
   try {
     _liveHoyUnsub = db.collection('sales').where('date', '==', _liveHoyFecha).onSnapshot(
-      snap => _renderVentasHoyLive(_calcVentasHoyLive(snap)),
+      snap => {
+        try { if (!(snap.metadata && snap.metadata.fromCache)) _contarLecturas('panel', snap.docChanges().length); } catch (e) {}
+        _renderVentasHoyLive(_calcVentasHoyLive(snap));
+      },
       err  => console.warn('No se pudo actualizar la venta en vivo:', err)
     );
   } catch (e) {
     console.warn('No se pudo iniciar la venta en vivo:', e);
+  }
+}
+
+// Botón "↻ Recalcular": una lectura completa de las ventas del día, solo
+// cuando se aprieta (por si hiciera falta confirmar el total).
+async function recalcularVentasHoyLive() {
+  if (!db || !navigator.onLine) { toast('Sin conexión', 'warn'); return; }
+  const hoy = _fechaHoyStr();
+  try {
+    const snap = await _conCategoria('panel', () => db.collection('sales').where('date', '==', hoy).get());
+    if (snap.metadata && snap.metadata.fromCache) throw new Error('sin respuesta del servidor');
+    const mapa = new Map();
+    let wm = _liveHoyWm;
+    snap.forEach(d => {
+      const { data, t } = _separarSello(d.data());
+      mapa.set(parseInt(d.id), data);
+      if (t > wm) wm = t;
+    });
+    _liveHoyMap = mapa; _liveHoyMapFecha = hoy; _liveHoyBase = store.sales; _liveHoyWm = wm;
+    _renderVentasHoyLive(_calcVentasHoyLive(_liveHoyPseudoSnap()));
+    toast('Ventas de hoy recalculadas', 'ok');
+  } catch (e) {
+    console.warn('recalcularVentasHoyLive:', e);
+    toast('No se pudo recalcular las ventas de hoy', 'err');
   }
 }
 
@@ -166,6 +274,16 @@ function _renderVentasHoyLive(m) {
   document.getElementById('live-hoy-transfer').textContent = formatMoney(m.transfer);
   document.getElementById('live-hoy-card').textContent     = formatMoney(m.card);
   const upd = document.getElementById('live-hoy-updated');
+  if (upd && !document.getElementById('live-hoy-recalc') && typeof _v27Activo === 'function' && _v27Activo()) {
+    const a = document.createElement('a');
+    a.id = 'live-hoy-recalc';
+    a.href = '#';
+    a.textContent = '↻ Recalcular';
+    a.title = 'Vuelve a leer todas las ventas de hoy desde Firebase (usa lecturas)';
+    a.style.cssText = 'font-size:11px;margin-left:8px;color:var(--txt3);text-decoration:underline;cursor:pointer';
+    a.onclick = ev => { ev.preventDefault(); recalcularVentasHoyLive(); };
+    upd.parentNode.insertBefore(a, upd.nextSibling);
+  }
   if (upd) {
     upd.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-AR', {
       hour: '2-digit', minute: '2-digit', second: '2-digit',
