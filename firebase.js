@@ -276,6 +276,7 @@ function initFirebase() {
   _instalarContador();
   db   = firebase.firestore();
   auth = firebase.auth();
+  _diagAuthIniciar();
 
   // Nota: acá antes se activaba db.enablePersistence(), pero se sacó
   // porque su caché en IndexedDB se podía corromper con el uso y colgaba
@@ -363,19 +364,32 @@ function waitForFirebase(callback, tries = 0) {
  */
 function _ensureAuth(callback, intento = 0) {
   if (auth.currentUser) {
+    _diagAuthLog('ya había sesión al conectar (' + String(auth.currentUser.uid).slice(0, 6) + ')');
     callback();
     return;
   }
+  const _tAuth = Date.now();
+  _diagAuthLog('no hay sesión: se pide una anónima (intento ' + (intento + 1) + ')');
   // 15s en vez de 10s: en conexiones móviles (4G/5G con señal débil) la
   // autenticación anónima puede tardar más de 10s sin que la conexión esté
   // realmente caída, y con el límite viejo eso se mostraba como "sin
   // conexión" antes de tiempo.
-  withTimeout(auth.signInAnonymously(), 15000, 'autenticación anónima')
+  const _pAuth = auth.signInAnonymously();
+  // Respuesta REAL de Firebase (aunque llegue después del límite de 15 s).
+  try {
+    _pAuth.then(
+      () => _diagAuthLog('Firebase respondió: sesión anónima OK a los ' + (Date.now() - _tAuth) + ' ms'),
+      e => _diagAuthLog('Firebase respondió con ERROR a los ' + (Date.now() - _tAuth) + ' ms: ' + _diagErrTxt(e))
+    );
+  } catch (e) {}
+  withTimeout(_pAuth, 15000, 'autenticación anónima')
     .then(() => {
       callback();
     })
     .catch(err => {
       console.error('Auth anónima falló:', err);
+      _diagAuthLog('el inicio de sesión no terminó (' + (Date.now() - _tAuth) + ' ms): ' + _diagErrTxt(err));
+      _diagSondear();
       _diagRegistrar('autenticación', err);
       // Si falla la auth (ej. sin internet), intentar con caché local
       const hasLocal = loadLocalData();
@@ -1021,10 +1035,139 @@ async function _loadCollectionWithRetry(loadFn, label, attempts = 2) {
 // Firebase, caché de archivos); nunca toca las ventas pendientes de subir,
 // la copia de respaldo para trabajar sin conexión ni la sesión del usuario.
 
+// ===== DIAGNÓSTICO TEMPORAL DE LA SESIÓN (v27.1) =====
+// SOLO REGISTRA: no borra la sesión, la copia local ni nada, y no cambia el
+// comportamiento de la app. Guarda un historial corto (se conserva aunque se
+// vuelva a cargar) con el error REAL de Firebase Auth (code + message), cuándo
+// cambia la sesión y, cuando falla el inicio de sesión, unas pruebas aparte
+// (almacenamiento del navegador y red hacia Google) para saber el motivo.
+// Se ve en la ventana de diagnóstico (tocar el cartel de conexión).
+const _DIAG_AUTH_KEY = 'bazarhub_diag_auth';
+const _DIAG_AUTH_MAX = 30;
+let _diagAuthMem = [];
+let _diagSondeoTs = 0;
+
+function _diagHora() {
+  const d = new Date();
+  const z = n => String(n).padStart(2, '0');
+  return z(d.getHours()) + ':' + z(d.getMinutes()) + ':' + z(d.getSeconds());
+}
+
+function _diagErrTxt(e) {
+  try {
+    if (!e) return 'error desconocido';
+    const code = e.code ? '[' + e.code + '] ' : '';
+    const name = (e.name && e.name !== 'Error' && !e.code) ? e.name + ': ' : '';
+    return (code + name + String(e.message || e)).slice(0, 200);
+  } catch (x) { return 'error'; }
+}
+
+function _diagAuthLog(msg) {
+  try {
+    const linea = _diagHora() + ' ' + String(msg).slice(0, 260);
+    _diagAuthMem.push(linea);
+    if (_diagAuthMem.length > _DIAG_AUTH_MAX) _diagAuthMem.shift();
+    try {
+      let prev = [];
+      try { prev = JSON.parse(localStorage.getItem(_DIAG_AUTH_KEY) || '[]'); } catch (e) { prev = []; }
+      if (!Array.isArray(prev)) prev = [];
+      prev.push(linea);
+      while (prev.length > _DIAG_AUTH_MAX) prev.shift();
+      localStorage.setItem(_DIAG_AUTH_KEY, JSON.stringify(prev));
+    } catch (e) {}
+    console.log('[BazarHub sesión] ' + linea);
+  } catch (e) {}
+}
+
+function _diagAuthLineas(max) {
+  let l = [];
+  try { l = JSON.parse(localStorage.getItem(_DIAG_AUTH_KEY) || '[]'); } catch (e) {}
+  if (!Array.isArray(l) || !l.length) l = _diagAuthMem.slice();
+  return l.slice(-max);
+}
+
+function _diagAuthTexto(max) {
+  const l = _diagAuthLineas(max);
+  if (!l.length) return 'Detalle de sesión: (sin eventos registrados)';
+  return 'Detalle de sesión (últimos ' + l.length + '):\n' + l.map(x => '  ' + x).join('\n');
+}
+
+function _diagAuthIniciar() {
+  try {
+    const app = (navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    const nav = (navigator.userAgent.match(/(CriOS|FxiOS|EdgiOS|Version|Chrome)\/[\d.]+/) || [''])[0];
+    _diagAuthLog('--- se abrió la app · internet=' + (navigator.onLine ? 'sí' : 'NO') + ' · modo app=' + (app ? 'sí' : 'no') + ' · ' + nav);
+    let visto = false;
+    auth.onAuthStateChanged(
+      u => { visto = true; _diagAuthLog('estado de sesión: ' + (u ? 'CON sesión (' + String(u.uid).slice(0, 6) + ')' : 'SIN sesión')); },
+      e => { visto = true; _diagAuthLog('error al leer el estado de sesión: ' + _diagErrTxt(e)); }
+    );
+    setTimeout(() => { if (!visto) _diagAuthLog('Firebase Auth NO informó el estado de la sesión en 8 s'); }, 8000);
+  } catch (e) {}
+}
+
+// Pruebas aparte (una vez por minuto como mucho), solo cuando falla el inicio
+// de sesión. No tocan las bases de Firebase ni los datos: usan una base de
+// prueba que se borra sola y piden páginas públicas de Google sin datos.
+async function _diagSondear() {
+  if (Date.now() - _diagSondeoTs < 60000) return;
+  _diagSondeoTs = Date.now();
+  try {
+    try {
+      localStorage.setItem('__bh_p', '1');
+      const ok = localStorage.getItem('__bh_p') === '1';
+      localStorage.removeItem('__bh_p');
+      _diagAuthLog('prueba localStorage: ' + (ok ? 'funciona' : 'NO devuelve lo escrito'));
+    } catch (e) { _diagAuthLog('prueba localStorage: ERROR ' + _diagErrTxt(e)); }
+
+    await new Promise(res => {
+      const t0 = Date.now();
+      let fin = false;
+      const listo = m => { if (fin) return; fin = true; _diagAuthLog('prueba IndexedDB: ' + m); res(); };
+      setTimeout(() => listo('SIN RESPUESTA en 5 s (colgado)'), 5000);
+      try {
+        const r = indexedDB.open('bazarhub_probe', 1);
+        r.onupgradeneeded = () => { try { r.result.createObjectStore('s'); } catch (e) {} };
+        r.onsuccess = () => {
+          try { r.result.close(); indexedDB.deleteDatabase('bazarhub_probe'); } catch (e) {}
+          listo('abre bien en ' + (Date.now() - t0) + ' ms');
+        };
+        r.onerror = () => listo('ERROR ' + _diagErrTxt(r.error));
+        r.onblocked = () => listo('bloqueada');
+      } catch (e) { listo('ERROR al abrir: ' + _diagErrTxt(e)); }
+    });
+
+    try {
+      if (indexedDB && indexedDB.databases) {
+        const l = await Promise.race([indexedDB.databases(), new Promise(r => setTimeout(() => r(null), 3000))]);
+        if (!l) _diagAuthLog('lista de bases IndexedDB: SIN RESPUESTA en 3 s');
+        else _diagAuthLog('bases IndexedDB: ' + (l.map(d => d.name + ' v' + d.version).filter(n => /firebase|bazarhub/i.test(n)).join(', ') || '(ninguna de Firebase/BazarHub)'));
+      } else { _diagAuthLog('indexedDB.databases() no disponible en este navegador'); }
+    } catch (e) { _diagAuthLog('lista de bases IndexedDB: ERROR ' + _diagErrTxt(e)); }
+
+    const sonda = async (url, nombre) => {
+      const t0 = Date.now();
+      const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      const to = setTimeout(() => { try { if (ac) ac.abort(); } catch (e) {} }, 8000);
+      try {
+        await fetch(url + '?_p=' + Date.now(), { mode: 'no-cors', cache: 'no-store', signal: ac ? ac.signal : undefined });
+        _diagAuthLog('red hacia ' + nombre + ': responde en ' + (Date.now() - t0) + ' ms');
+      } catch (e) {
+        _diagAuthLog('red hacia ' + nombre + ': NO responde tras ' + (Date.now() - t0) + ' ms (' + _diagErrTxt(e) + ')');
+      } finally { clearTimeout(to); }
+    };
+    await Promise.all([
+      sonda('https://identitytoolkit.googleapis.com/', 'inicio de sesión'),
+      sonda('https://securetoken.googleapis.com/', 'renovar sesión'),
+      sonda('https://firestore.googleapis.com/', 'base de datos'),
+    ]);
+  } catch (e) { _diagAuthLog('pruebas: ERROR ' + _diagErrTxt(e)); }
+}
+
 function _diagRegistrar(etiqueta, err) {
   try {
     store._diagCarga = store._diagCarga || {};
-    store._diagCarga[etiqueta] = String((err && err.message) || err || 'error').slice(0, 160);
+    store._diagCarga[etiqueta] = (err && err.code ? '[' + err.code + '] ' : '') + String((err && err.message) || err || 'error').slice(0, 160);
   } catch (e) {}
 }
 
@@ -1043,20 +1186,21 @@ function _diagEscapar(t) {
   return String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-function _diagTexto() {
+function _diagTexto(full) {
   const L = [];
   const errores = store._diagCarga || {};
   const ok = store._diagCargadas ? Array.from(store._diagCargadas) : [];
   L.push('Internet del dispositivo: ' + (navigator.onLine ? 'sí' : 'NO'));
   L.push('Firebase iniciado: ' + (db ? 'sí' : 'NO'));
   try { L.push('Sesión Firebase: ' + (auth && auth.currentUser ? 'sí (' + String(auth.currentUser.uid).slice(0, 6) + ')' : 'NO')); } catch (e) {}
+  try { L.push(_diagAuthTexto(full ? _DIAG_AUTH_MAX : 10)); } catch (e) {}
   if (ok.length) L.push('Cargado bien: ' + ok.join(', '));
   const fallas = Object.keys(errores);
   if (fallas.length) fallas.forEach(k => L.push('Falló ' + k + ': ' + errores[k]));
   else if (store._offlineFallbackShown) L.push('Sin detalle de error (la carga no terminó).');
   try { if (navigator.connection) L.push('Red: ' + (navigator.connection.effectiveType || '?')); } catch (e) {}
   try { L.push(_lecturasTexto()); } catch (e) {}
-  L.push('Archivos: firebase.js v27 · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
+  L.push('Archivos: firebase.js v27.1 (diag. sesión) · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
   return L.join('\n');
 }
 
@@ -1084,12 +1228,22 @@ function abrirDiagnosticoConexion() {
       '<div style="font-size:12px;color:var(--txt2);margin-bottom:4px"><b>Reparar</b> borra la copia guardada en este dispositivo y la vuelve a bajar de Firebase (la primera carga puede tardar). Las ventas pendientes de subir no se borran.</div>' +
       '<div class="macts" style="flex-wrap:wrap">' +
         '<button class="btn" id="diag-cerrar">Cerrar</button>' +
+        '<button class="btn" id="diag-copiar">Copiar</button>' +
         '<button class="btn" id="diag-reintentar">Reintentar</button>' +
         '<button class="btn red" id="diag-reparar">Reparar</button>' +
       '</div>' +
     '</div>';
   m.classList.add('on');
   document.getElementById('diag-cerrar').onclick = () => m.classList.remove('on');
+  document.getElementById('diag-copiar').onclick = () => {
+    const txt = _diagTexto(true);
+    const ok = () => toast('Diagnóstico copiado', 'ok');
+    const mal = () => toast('No se pudo copiar: sacá una captura', 'warn');
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, mal);
+      else mal();
+    } catch (e) { mal(); }
+  };
   document.getElementById('diag-reintentar').onclick = () => {
     m.classList.remove('on');
     loadFromFirebase().then(() => _rerenderPaginaActual()).catch(() => {});
