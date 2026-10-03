@@ -1035,7 +1035,7 @@ async function _loadCollectionWithRetry(loadFn, label, attempts = 2) {
 // Firebase, caché de archivos); nunca toca las ventas pendientes de subir,
 // la copia de respaldo para trabajar sin conexión ni la sesión del usuario.
 
-// ===== DIAGNÓSTICO TEMPORAL DE LA SESIÓN (v27.1) =====
+// ===== DIAGNÓSTICO TEMPORAL DE LA SESIÓN (v27.2) =====
 // SOLO REGISTRA: no borra la sesión, la copia local ni nada, y no cambia el
 // comportamiento de la app. Guarda un historial corto (se conserva aunque se
 // vuelva a cargar) con el error REAL de Firebase Auth (code + message), cuándo
@@ -1102,8 +1102,53 @@ function _diagAuthIniciar() {
       u => { visto = true; _diagAuthLog('estado de sesión: ' + (u ? 'CON sesión (' + String(u.uid).slice(0, 6) + ')' : 'SIN sesión')); },
       e => { visto = true; _diagAuthLog('error al leer el estado de sesión: ' + _diagErrTxt(e)); }
     );
-    setTimeout(() => { if (!visto) _diagAuthLog('Firebase Auth NO informó el estado de la sesión en 8 s'); }, 8000);
+    setTimeout(() => { if (!visto) { _diagAuthLog('Firebase Auth NO informó el estado de la sesión en 8 s'); _diagSondear(); } }, 8000);
   } catch (e) {}
+}
+
+// Lectura SOLA (no se escribe ni se borra nada) de la base donde Firebase Auth
+// guarda la sesión, para ver si es esa la que se cuelga. Se abre sin número de
+// versión (abre la que existe, sin cambiarla); si no existiera, se cancela la
+// creación para no dejar una base vacía que confunda a Firebase.
+function _diagLeerBaseSesion(nombre) {
+  nombre = nombre || 'firebaseLocalStorageDb';
+  return new Promise(res => {
+    const t0 = Date.now();
+    let fin = false, timer = null;
+    const listo = m => {
+      if (fin) return;
+      fin = true; clearTimeout(timer);
+      _diagAuthLog('base de sesión de Firebase (solo lectura): ' + m);
+      res();
+    };
+    const limite = m => { clearTimeout(timer); timer = setTimeout(() => listo(m), 6000); };
+    limite('SIN RESPUESTA al abrirla en 6 s (colgada)');
+    try {
+      const r = indexedDB.open(nombre);
+      r.onupgradeneeded = () => { try { r.transaction.abort(); } catch (e) {} listo('no existe (no se creó)'); };
+      r.onerror = () => listo('ERROR al abrirla: ' + _diagErrTxt(r.error));
+      r.onblocked = () => listo('bloqueada por otra pestaña');
+      r.onsuccess = () => {
+        const d = r.result;
+        const cerrar = () => { try { d.close(); } catch (e) {} };
+        if (fin) { cerrar(); _diagAuthLog('(tarde) la base de sesión de Firebase abrió recién a los ' + (Date.now() - t0) + ' ms'); return; }
+        const tAbre = Date.now() - t0;
+        try {
+          if (!d.objectStoreNames.contains('firebaseLocalStorage')) { cerrar(); listo('abre en ' + tAbre + ' ms (v' + d.version + ') pero sin la tabla de sesión'); return; }
+          limite('abre en ' + tAbre + ' ms pero la LECTURA no responde en 6 s (colgada)');
+          const tx = d.transaction('firebaseLocalStorage', 'readonly');
+          const rq = tx.objectStore('firebaseLocalStorage').getAllKeys();
+          rq.onsuccess = () => {
+            const k = rq.result || [];
+            cerrar();
+            listo('abre en ' + tAbre + ' ms (v' + d.version + '), lee en ' + (Date.now() - t0 - tAbre) + ' ms · registros: ' + k.length + ' · sesión guardada: ' + (k.some(x => String(x).indexOf('firebase:authUser:') === 0) ? 'sí' : 'no'));
+          };
+          rq.onerror = () => { cerrar(); listo('abre pero la lectura da ERROR ' + _diagErrTxt(rq.error)); };
+          tx.onabort = () => { cerrar(); listo('lectura abortada ' + _diagErrTxt(tx.error)); };
+        } catch (e) { cerrar(); listo('ERROR al leer: ' + _diagErrTxt(e)); }
+      };
+    } catch (e) { listo('ERROR: ' + _diagErrTxt(e)); }
+  });
 }
 
 // Pruebas aparte (una vez por minuto como mucho), solo cuando falla el inicio
@@ -1119,6 +1164,10 @@ async function _diagSondear() {
       localStorage.removeItem('__bh_p');
       _diagAuthLog('prueba localStorage: ' + (ok ? 'funciona' : 'NO devuelve lo escrito'));
     } catch (e) { _diagAuthLog('prueba localStorage: ERROR ' + _diagErrTxt(e)); }
+
+    try {
+      _diagAuthLog('service worker: ' + (navigator.serviceWorker ? (navigator.serviceWorker.controller ? 'controla esta pestaña' : 'no controla esta pestaña') : 'no disponible'));
+    } catch (e) {}
 
     await new Promise(res => {
       const t0 = Date.now();
@@ -1144,6 +1193,8 @@ async function _diagSondear() {
         else _diagAuthLog('bases IndexedDB: ' + (l.map(d => d.name + ' v' + d.version).filter(n => /firebase|bazarhub/i.test(n)).join(', ') || '(ninguna de Firebase/BazarHub)'));
       } else { _diagAuthLog('indexedDB.databases() no disponible en este navegador'); }
     } catch (e) { _diagAuthLog('lista de bases IndexedDB: ERROR ' + _diagErrTxt(e)); }
+
+    await _diagLeerBaseSesion();
 
     const sonda = async (url, nombre) => {
       const t0 = Date.now();
@@ -1200,7 +1251,7 @@ function _diagTexto(full) {
   else if (store._offlineFallbackShown) L.push('Sin detalle de error (la carga no terminó).');
   try { if (navigator.connection) L.push('Red: ' + (navigator.connection.effectiveType || '?')); } catch (e) {}
   try { L.push(_lecturasTexto()); } catch (e) {}
-  L.push('Archivos: firebase.js v27.1 (diag. sesión) · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
+  L.push('Archivos: firebase.js v27.2 (diag. sesión) · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
   return L.join('\n');
 }
 
