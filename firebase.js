@@ -273,6 +273,7 @@ function initFirebase() {
     firebase.initializeApp(config);
   }
   _instalarSellos();
+  _instalarContador();
   db   = firebase.firestore();
   auth = firebase.auth();
 
@@ -478,6 +479,133 @@ const _SYNC_INCREMENTAL_DESDE = Date.parse('2026-09-30T07:00:00Z'); // 30/9 4:00
 const _SYNC_COLS = ['products', 'proveedores', 'sales', 'orders', 'movimientos',
                     'ctacte', 'retiros', 'cajas', 'devoluciones'];
 
+// ===== v27: AHORRO DE LECTURAS =====
+// 1) Movimientos: en una carga COMPLETA (dispositivo nuevo, ventana de
+//    incógnito, Reparar, cada 30 días) solo se bajan los de los últimos
+//    _MOV_DIAS_RECIENTES días; los anteriores se piden recién cuando hacen
+//    falta (pantalla Movimientos / exportar CSV). Los dispositivos que ya
+//    tienen la copia local completa no cambian en nada.
+// 2) Panel de administración: ver dashboard.js (usa las ventas ya cargadas).
+// 3) Contador aproximado de lecturas (se ve en la pantalla de diagnóstico).
+//
+// INTERRUPTOR para volver al comportamiento de v26 en UN dispositivo sin
+// publicar nada: en la consola del navegador,
+//   localStorage.setItem('bazarhub_v27_off','1')   y recargar.
+// (Para volver a activarlo: localStorage.removeItem('bazarhub_v27_off').)
+const _MOV_DIAS_RECIENTES = 30;   // no bajar de 30: la alerta "sin movimiento en 30 días" del panel los necesita
+const _MOV_PAGINA         = 500;
+const _SYNC_SCHEMA_PARCIAL = 2; // copia local de movimientos "parcial" (v26 no la acepta: se ignora, no se confunde)
+
+function _v27Activo() {
+  try { return !localStorage.getItem('bazarhub_v27_off'); } catch (e) { return true; }
+}
+
+// --- Contador aproximado de lecturas ---
+// Cuenta los documentos que devuelven las consultas (get) y los cambios que
+// llegan por el oyente del panel. No incluye lecturas dentro de transacciones
+// (~2 por venta) ni las de otros dispositivos. Es una estimación para
+// comparar antes/después, no la factura.
+const _LECT_KEY     = 'bazarhub_lecturas';
+const _LECT_BUCKETS = ['carga', 'movimientos', 'ventas', 'panel', 'otras'];
+const _LECT_NOMBRES = { carga: 'carga inicial', movimientos: 'movimientos', ventas: 'ventas', panel: 'panel', otras: 'otras consultas' };
+let _lectSesion   = { carga: 0, movimientos: 0, ventas: 0, panel: 0, otras: 0 };
+let _lectPend     = { carga: 0, movimientos: 0, ventas: 0, panel: 0, otras: 0 };
+let _lectTimer    = null;
+let _lectForzado  = null;   // categoría forzada para la consulta que se está armando ahora
+let _cargaEnCurso = false;  // true mientras loadFromFirebase() está bajando datos
+
+function _lectDia() {
+  const d = new Date();
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
+
+function _lectLeerHoy() {
+  try {
+    const j = JSON.parse(localStorage.getItem(_LECT_KEY) || 'null');
+    if (j && j.dia === _lectDia() && j.b) return j;
+  } catch (e) {}
+  return { dia: _lectDia(), b: { carga: 0, movimientos: 0, ventas: 0, panel: 0, otras: 0 } };
+}
+
+function _lectGuardar() {
+  _lectTimer = null;
+  try {
+    const hoy = _lectLeerHoy();   // se vuelve a leer: si hay otra pestaña, no se pisan
+    _LECT_BUCKETS.forEach(k => { hoy.b[k] = (hoy.b[k] || 0) + (_lectPend[k] || 0); _lectPend[k] = 0; });
+    localStorage.setItem(_LECT_KEY, JSON.stringify(hoy));
+  } catch (e) {}
+}
+
+function _contarLecturas(categoria, n) {
+  if (!(n > 0)) return;
+  const k = _LECT_BUCKETS.indexOf(categoria) >= 0 ? categoria : 'otras';
+  _lectSesion[k] += n;
+  _lectPend[k]   += n;
+  if (!_lectTimer) _lectTimer = setTimeout(_lectGuardar, 2000);
+}
+
+// Ejecuta fn (que debe hacer la consulta de forma SINCRÓNICA) marcándola con
+// una categoría fija.
+function _conCategoria(categoria, fn) {
+  const prev = _lectForzado;
+  _lectForzado = categoria;
+  try { return fn(); } finally { _lectForzado = prev; }
+}
+
+function _categoriaDeSnap(snap, forzada) {
+  if (forzada) return forzada;
+  try {
+    if (snap.docs && snap.docs.length) {
+      const c = snap.docs[0].ref.parent.id;
+      if (c === 'movimientos') return 'movimientos';
+      if (c === 'sales') return 'ventas';
+    }
+  } catch (e) {}
+  return _cargaEnCurso ? 'carga' : 'otras';
+}
+
+function _instalarContador() {
+  const fs = firebase.firestore;
+  if (fs.__bazarhubContador) return;
+  try {
+    const Q = fs.Query.prototype, D = fs.DocumentReference.prototype;
+    const qGet = Q.get, dGet = D.get;
+    Q.get = function (...a) {
+      const forz = _lectForzado;
+      return qGet.apply(this, a).then(snap => {
+        try { if (!(snap.metadata && snap.metadata.fromCache)) _contarLecturas(_categoriaDeSnap(snap, forz), Math.max(1, snap.size)); } catch (e) {}
+        return snap;
+      });
+    };
+    D.get = function (...a) {
+      const forz = _lectForzado;
+      return dGet.apply(this, a).then(snap => {
+        try { if (!(snap.metadata && snap.metadata.fromCache)) _contarLecturas(forz || (_cargaEnCurso ? 'carga' : 'otras'), 1); } catch (e) {}
+        return snap;
+      });
+    };
+    fs.__bazarhubContador = true;
+  } catch (e) {
+    console.warn('[BazarHub] No se pudo instalar el contador de lecturas:', e);
+  }
+}
+
+function _lectLinea(b) {
+  const total = _LECT_BUCKETS.reduce((t, k) => t + (b[k] || 0), 0);
+  return _LECT_BUCKETS.map(k => _LECT_NOMBRES[k] + ' ' + (b[k] || 0)).join(' · ') + '  =  ' + total;
+}
+
+function _lecturasTexto() {
+  const hoy = _lectLeerHoy();
+  _LECT_BUCKETS.forEach(k => { hoy.b[k] = (hoy.b[k] || 0) + (_lectPend[k] || 0); });
+  const L = [];
+  L.push('Lecturas aprox. de Firebase (solo este dispositivo):');
+  L.push('  Desde que abriste la app: ' + _lectLinea(_lectSesion));
+  L.push('  Hoy (total del dispositivo): ' + _lectLinea(hoy.b));
+  L.push('  Movimientos: ' + (store.movimientosDesdeId === undefined ? 'todavía sin cargar' : store.movimientosDesdeId != null ? 'solo últimos ' + _MOV_DIAS_RECIENTES + ' días cargados' : 'historial completo') + (_v27Activo() ? '' : ' [v27 apagada]'));
+  return L.join('\n');
+}
+
 // --- 1. Sellos en cada escritura ---
 
 function _sellar(ref, data) {
@@ -551,6 +679,9 @@ function _separarSello(raw) {
 // --- 2. Copia local en IndexedDB ---
 
 let _syncDbPromise = null;
+// Última marca (_mt, en ms) hasta la que cada colección está al día en este
+// dispositivo. La usa el panel para escuchar solo lo que cambió desde entonces.
+const _syncMarca = {};
 
 function _syncDb() {
   if (_syncDbPromise) return _syncDbPromise;
@@ -606,7 +737,8 @@ function _syncTsDesde(ms) {
 }
 
 function _syncCopiaValida(m) {
-  return !!(m && m.v === _SYNC_SCHEMA && m.docs && m.fullAt &&
+  if (m && m.parcial && !_v27Activo()) return false;   // interruptor v27 apagado: se ignora la copia parcial
+  return !!(m && (m.v === _SYNC_SCHEMA || m.v === _SYNC_SCHEMA_PARCIAL) && m.docs && m.fullAt &&
             m.fullAt >= _SYNC_INCREMENTAL_DESDE &&
             Date.now() - m.fullAt < _SYNC_FULL_EVERY_MS);
 }
@@ -663,7 +795,17 @@ async function _syncCol(col) {
   let m;
   let hayCambios = true;
 
-  if (!anterior) {
+  let reciente = null;
+  if (!anterior && col === 'movimientos' && _v27Activo() && _MOV_DIAS_RECIENTES > 0) {
+    // v27: carga completa SOLO de los movimientos recientes (ver arriba). Si
+    // algo falla (índice, datos raros, red), se hace la carga completa de siempre.
+    try { reciente = await _cargarMovimientosRecientes(); }
+    catch (e) { console.warn('[BazarHub] Movimientos recientes: se hace carga completa:', e); _diagRegistrar('movimientos recientes', e); }
+  }
+  if (reciente) {
+    m = { v: reciente.completo ? _SYNC_SCHEMA : _SYNC_SCHEMA_PARCIAL, docs: reciente.docs, wm: reciente.wm, wmB: maxBorrado, fullAt: Date.now() };
+    if (!reciente.completo) m.parcial = { desdeId: reciente.desdeId, dias: _MOV_DIAS_RECIENTES };
+  } else if (!anterior) {
     // Carga completa
     const snap = _exigirServidor(await db.collection(col).get(), col);
     const docs = {};
@@ -699,14 +841,113 @@ async function _syncCol(col) {
       if (cur && (cur.t || 0) <= b.t) { delete docs[b.id]; cambios++; }
     });
     const wmB = Math.max(anterior.wmB || 0, maxBorrado);
-    m = { v: _SYNC_SCHEMA, docs, wm, wmB, fullAt: anterior.fullAt };
+    m = { v: anterior.v || _SYNC_SCHEMA, docs, wm, wmB, fullAt: anterior.fullAt };
+    if (anterior.parcial) m.parcial = anterior.parcial;
     // Sin novedades: no hace falta volver a escribir la copia local entera.
     hayCambios = cambios > 0 || wm !== anterior.wm || wmB !== anterior.wmB;
   }
 
   ctx.mirrors[col] = m;
+  _syncMarca[col] = m.wm || 0;
   if (hayCambios) _syncIdbPut(col, m).catch(e => console.warn('[BazarHub] No se pudo guardar la copia local de ' + col + ':', e));
   return Object.keys(m.docs).map(id => ({ id, data: m.docs[id].d }));
+}
+
+// ===== v27: MOVIMIENTOS RECIENTES / ANTERIORES =====
+
+// Fecha ("d/m/aaaa, hh:mm:ss") de un movimiento -> ms, o null si no se entiende.
+function _fechaMovMs(f) {
+  if (!f) return null;
+  const p = String(f).split(/[\/, ]+/);
+  const d = parseInt(p[0], 10), mo = parseInt(p[1], 10), y = parseInt(p[2], 10);
+  if (!d || !mo || !y || y < 2000 || y > 2100) return null;
+  return new Date(y, mo - 1, d).getTime();
+}
+
+// Baja los movimientos del más nuevo al más viejo (por N°), de a páginas, y
+// corta cuando la última página llega más atrás del límite de días. Solo se
+// cobran las páginas leídas. Si algo no cuadra (documentos sin N° numérico),
+// vuelve a la carga completa de siempre.
+async function _cargarMovimientosRecientes() {
+  const corte = Date.now() - _MOV_DIAS_RECIENTES * 24 * 60 * 60 * 1000;
+  const docs = {};
+  let wm = 0, ultimo = null, completo = false, menorId = null;
+  for (let pag = 0; pag < 60; pag++) {
+    let q = db.collection('movimientos').orderBy('id', 'desc').limit(_MOV_PAGINA);
+    if (ultimo) q = q.startAfter(ultimo);
+    const snap = _exigirServidor(await q.get(), 'movimientos');
+    if (snap.empty) { completo = true; break; }
+    snap.forEach(d => {
+      const { data, t } = _separarSello(d.data());
+      if (typeof data.id !== 'number' || String(data.id) !== d.id) throw new Error('movimiento sin N° numérico coherente (' + d.id + ')');
+      docs[d.id] = { d: data, t };
+      if (t > wm) wm = t;
+      if (menorId === null || data.id < menorId) menorId = data.id;
+    });
+    ultimo = snap.docs[snap.docs.length - 1];
+    if (snap.size < _MOV_PAGINA) { completo = true; break; }
+    const f = _fechaMovMs(ultimo.data().fecha);
+    if (f !== null && f < corte) break;
+  }
+  return { docs, wm, completo, desdeId: menorId };
+}
+
+let _movAntCargando = false;
+
+// Baja movimientos anteriores a los ya cargados. modo 'mas' = ~90 días más;
+// 'todo' = todo el historial. Actualiza la lista en pantalla y la copia local.
+async function cargarMovimientosAnteriores(modo) {
+  if (_movAntCargando) return { cargados: 0, completo: store.movimientosDesdeId == null };
+  if (store.movimientosDesdeId == null) return { cargados: 0, completo: true };
+  if (!db || !navigator.onLine) throw new Error('Sin conexión');
+  _movAntCargando = true;
+  try {
+    let desdeId = store.movimientosDesdeId;
+    // Referencia: la fecha del movimiento MÁS VIEJO por N° (no la fecha mínima:
+    // un movimiento cargado a mano con una fecha rara correría el límite).
+    const refMs = store.movimientos.length ? _fechaMovMs(store.movimientos[0].fecha) : null;
+    const corte = (refMs !== null ? refMs : Date.now()) - 90 * 24 * 60 * 60 * 1000;
+    const nuevos = {};
+    let completo = false, cargados = 0;
+    for (let pag = 0; pag < 60; pag++) {
+      const snap = _exigirServidor(await db.collection('movimientos').where('id', '<', desdeId).orderBy('id', 'desc').limit(_MOV_PAGINA).get(), 'movimientos');
+      if (snap.empty) { completo = true; break; }
+      snap.forEach(d => {
+        const { data, t } = _separarSello(d.data());
+        nuevos[d.id] = { d: data, t };
+        cargados++;
+        if (typeof data.id === 'number' && data.id < desdeId) desdeId = data.id;
+      });
+      const ultimo = snap.docs[snap.docs.length - 1];
+      if (snap.size < _MOV_PAGINA) { completo = true; break; }
+      if (modo !== 'todo') {
+        const f = _fechaMovMs(ultimo.data().fecha);
+        if (f !== null && f < corte) break;
+      }
+    }
+    const yaCargados = new Set(store.movimientos.map(m => m.id));
+    Object.keys(nuevos).forEach(id => {
+      if (!yaCargados.has(parseInt(id))) store.movimientos.push({ ...nuevos[id].d, id: parseInt(id) });
+    });
+    store.movimientos.sort((a, b) => a.id - b.id);
+    store.movimientosDesdeId = completo ? null : desdeId;
+    // Copia local: se suman los documentos nuevos (si la lectura de la copia
+    // falló no pasa nada: la próxima carga completa lo resuelve).
+    try {
+      const ctx = await _syncCtxPromise;
+      const mir = ctx && ctx.mirrors && ctx.mirrors.movimientos;
+      if (mir) {
+        const docs = { ...mir.docs, ...nuevos };
+        const m2 = { ...mir, docs };
+        if (completo) { delete m2.parcial; m2.v = _SYNC_SCHEMA; } else { m2.parcial = { desdeId, dias: (mir.parcial && mir.parcial.dias) || _MOV_DIAS_RECIENTES }; }
+        ctx.mirrors.movimientos = m2;
+        await _syncIdbPut('movimientos', m2);
+      }
+    } catch (e) { console.warn('[BazarHub] No se pudo actualizar la copia local de movimientos:', e); }
+    return { cargados, completo };
+  } finally {
+    _movAntCargando = false;
+  }
 }
 
 // ===== CARGA DE USUARIOS (antes del login) =====
@@ -728,7 +969,7 @@ async function loadUsersFromFirebase() {
     return false;
   }
   try {
-    const snap = _exigirServidor(await withTimeout(db.collection('users').get(), 10000, 'cargar usuarios'), 'usuarios');
+    const snap = _exigirServidor(await withTimeout(_conCategoria('carga', () => db.collection('users').get()), 10000, 'cargar usuarios'), 'usuarios');
     store.users = [];
     snap.forEach(d => store.users.push({ ..._separarSello(d.data()).data, id: d.id }));
     const needsMigration = store.users.some(u => u.pass && !u.passHash);
@@ -814,7 +1055,8 @@ function _diagTexto() {
   if (fallas.length) fallas.forEach(k => L.push('Falló ' + k + ': ' + errores[k]));
   else if (store._offlineFallbackShown) L.push('Sin detalle de error (la carga no terminó).');
   try { if (navigator.connection) L.push('Red: ' + (navigator.connection.effectiveType || '?')); } catch (e) {}
-  L.push('Archivos: firebase.js v26 · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
+  try { L.push(_lecturasTexto()); } catch (e) {}
+  L.push('Archivos: firebase.js v27 · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
   return L.join('\n');
 }
 
@@ -959,6 +1201,7 @@ async function loadFromFirebase() {
   store._diagCargadas = cargadas;
   store._historialPendiente = true;
 
+  _cargaEnCurso = true;
   const todo = (async () => {
     const results = [];
     for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
@@ -969,6 +1212,7 @@ async function loadFromFirebase() {
       results.push(...batchResults);
     }
     store._historialPendiente = false;
+    _cargaEnCurso = false;
     const failed = results
       .map((r, i) => ({ ok: r.status === 'fulfilled', label: tasks[i][0] }))
       .filter(x => !x.ok)
@@ -1096,6 +1340,12 @@ async function _loadMovimientos() {
   store.movimientos = [];
   docs.forEach(d => store.movimientos.push({ ...d.data, id: parseInt(d.id) }));
   store.movimientos.sort((a, b) => a.id - b.id);
+  // null = historial completo; un número = solo hay movimientos con N° >= ese.
+  try {
+    const ctx = await _syncCtxPromise;
+    const mir = ctx && ctx.mirrors && ctx.mirrors.movimientos;
+    store.movimientosDesdeId = (mir && mir.parcial) ? mir.parcial.desdeId : null;
+  } catch (e) { store.movimientosDesdeId = null; }
 }
 
 async function _loadCtaCte() {
