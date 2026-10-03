@@ -635,6 +635,18 @@ function go(page) {
 // ===== EXPORT CSV =====
 
 function exportCSV(type) {
+  // v27: el CSV de movimientos SIEMPRE sale con todo el historial. Si la lista
+  // en memoria es parcial, primero se baja el resto (con aviso); si se cancela
+  // o falla, no se exporta nada (nunca un archivo incompleto).
+  if (type === 'movimientos' && store.movimientosDesdeId != null) {
+    if (!confirm('Para exportar los movimientos hay que bajar TODO el historial de Firebase (pueden ser miles de lecturas). ¿Seguir?')) return;
+    toast('Bajando el historial de movimientos…', 'warn');
+    cargarMovimientosAnteriores('todo').then(() => {
+      if (store.movimientosDesdeId != null) { toast('No se pudo bajar todo el historial: no se exportó nada', 'err'); return; }
+      exportCSV(type);
+    }).catch(() => toast('No se pudo bajar el historial completo: no se exportó nada', 'err'));
+    return;
+  }
   let rows = [];
   let filename = '';
 
