@@ -86,7 +86,44 @@ async function saveStock() {
 
 // ===== MOVIMIENTOS =====
 
+// v27: si el historial de movimientos está parcial (solo los últimos días),
+// se avisa y se ofrece bajar los anteriores. Con la copia local completa
+// (dispositivos que ya la tenían) este cartel no aparece.
+function _movActualizarAvisoParcial() {
+  const tb = document.getElementById('mov-table');
+  if (!tb) return;
+  const sec = tb.closest('.sec') || tb.parentNode;
+  let av = document.getElementById('mov-parcial');
+  if (store.movimientosDesdeId == null) { if (av) av.remove(); return; }
+  if (!av) {
+    av = document.createElement('div');
+    av.id = 'mov-parcial';
+    av.style.cssText = 'font-size:12px;color:var(--txt2);background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:10px;line-height:1.5';
+    sec.insertBefore(av, sec.firstChild);
+  }
+  av.innerHTML = 'Mostrando solo los movimientos de los últimos ' + _MOV_DIAS_RECIENTES + ' días (' + store.movimientos.length +
+    ' cargados). Los filtros buscan solo entre estos. ' +
+    '<button class="btn sm" onclick="cargarMovAntiguosUI(\'mas\')">Cargar 90 días más</button> ' +
+    '<button class="btn sm" onclick="cargarMovAntiguosUI(\'todo\')">Cargar todo el historial</button>';
+}
+
+async function cargarMovAntiguosUI(modo) {
+  if (modo === 'todo' && !confirm('Se va a bajar todo el historial de movimientos desde Firebase (pueden ser miles de lecturas). ¿Seguir?')) return;
+  const av = document.getElementById('mov-parcial');
+  if (av) av.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  toast('Cargando movimientos anteriores…', 'warn');
+  try {
+    const r = await cargarMovimientosAnteriores(modo);
+    toast(r.completo ? 'Historial de movimientos completo' : r.cargados + ' movimientos anteriores cargados', 'ok');
+  } catch (e) {
+    console.warn('cargarMovAntiguosUI:', e);
+    toast('No se pudieron cargar los movimientos anteriores', 'err');
+  }
+  renderMovimientos();
+}
+
 function renderMovimientos() {
+  _movActualizarAvisoParcial();
   const isAdmin  = store.currentUser?.role === 'admin';
   const thAcc    = document.getElementById('th-mov-acc');
   const btnNuevo = document.getElementById('btn-nuevo-mov');
