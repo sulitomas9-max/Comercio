@@ -1035,7 +1035,7 @@ async function _loadCollectionWithRetry(loadFn, label, attempts = 2) {
 // Firebase, caché de archivos); nunca toca las ventas pendientes de subir,
 // la copia de respaldo para trabajar sin conexión ni la sesión del usuario.
 
-// ===== DIAGNÓSTICO TEMPORAL DE LA SESIÓN (v27.3) =====
+// ===== DIAGNÓSTICO TEMPORAL DE LA SESIÓN (v27.4) =====
 // SOLO REGISTRA: no borra la sesión, la copia local ni nada, y no cambia el
 // comportamiento de la app. Guarda un historial corto (se conserva aunque se
 // vuelva a cargar) con el error REAL de Firebase Auth (code + message), cuándo
@@ -1193,6 +1193,51 @@ function _diagLeerBaseSesion(nombre) {
   });
 }
 
+// Prueba de si una base de IndexedDB deja EMPEZAR una transacción. Con modo
+// 'readwrite' se pide permiso de escritura pero se hace una sola lectura de una
+// clave inexistente: NO se escribe, NO se borra y NO se cambia nada. Si algo
+// la tiene trabada (otra pestaña, un bug de iOS), la transacción no arranca y
+// a los 6 s se cancela (abort) para no dejar nada en cola. Solo se usa cuando
+// el inicio de sesión ya falló.
+function _diagProbarEscritura(etiqueta, nombre, tabla, modo) {
+  return new Promise(res => {
+    const t0 = Date.now();
+    let fin = false, tx = null, d = null;
+    const cerrar = () => { try { if (d) d.close(); } catch (e) {} };
+    const listo = m => {
+      if (fin) return;
+      fin = true; clearTimeout(timer);
+      _diagAuthLog('prueba de ' + (modo === 'readwrite' ? 'permiso de escritura' : 'lectura') + ' en ' + etiqueta + ': ' + m);
+      res();
+    };
+    const timer = setTimeout(() => {
+      try { if (tx) tx.abort(); } catch (e) {}
+      cerrar();
+      listo(tx ? 'SIN RESPUESTA en 6 s: la transacción no pudo empezar (base TRABADA)' : 'SIN RESPUESTA al abrir la base en 6 s (colgada)');
+    }, 6000);
+    try {
+      const r = indexedDB.open(nombre);
+      r.onupgradeneeded = () => { try { r.transaction.abort(); } catch (e) {} listo('la base no existe (no se creó)'); };
+      r.onerror = () => listo('ERROR al abrir: ' + _diagErrTxt(r.error));
+      r.onblocked = () => listo('bloqueada por otra pestaña');
+      r.onsuccess = () => {
+        d = r.result;
+        if (fin) { cerrar(); return; }
+        const tAbre = Date.now() - t0;
+        try {
+          if (!d.objectStoreNames.contains(tabla)) { cerrar(); listo('abre en ' + tAbre + ' ms pero no tiene la tabla ' + tabla); return; }
+          tx = d.transaction(tabla, modo);
+          const rq = tx.objectStore(tabla).get('__bazarhub_sin_clave__');
+          rq.onsuccess = () => { listo('abre en ' + tAbre + ' ms, la transacción empezó en ' + (Date.now() - t0 - tAbre) + ' ms · OK'); };
+          rq.onerror = () => listo('la lectura dio ERROR ' + _diagErrTxt(rq.error));
+          tx.oncomplete = () => cerrar();
+          tx.onabort = () => { cerrar(); listo('transacción abortada ' + _diagErrTxt(tx.error)); };
+        } catch (e) { cerrar(); listo('ERROR: ' + _diagErrTxt(e)); }
+      };
+    } catch (e) { listo('ERROR: ' + _diagErrTxt(e)); }
+  });
+}
+
 // Pruebas aparte (una vez por minuto como mucho), solo cuando falla el inicio
 // de sesión. No tocan las bases de Firebase ni los datos: usan una base de
 // prueba que se borra sola y piden páginas públicas de Google sin datos.
@@ -1238,6 +1283,14 @@ async function _diagSondear() {
     } catch (e) { _diagAuthLog('lista de bases IndexedDB: ERROR ' + _diagErrTxt(e)); }
 
     await _diagLeerBaseSesion();
+
+    // v27.4: ¿las bases aceptan que se empiece a ESCRIBIR en ellas? (no se escribe
+    // ningún dato). Firebase escribe en su base al arrancar; si esa escritura
+    // queda trabada, Auth se cuelga sin dar error. Se prueba la base de sesión de
+    // Firebase, la de "latidos" de Firebase y, de control, la propia de BazarHub.
+    await _diagProbarEscritura('base de sesión de Firebase', 'firebaseLocalStorageDb', 'firebaseLocalStorage', 'readwrite');
+    await _diagProbarEscritura('base de latidos de Firebase', 'firebase-heartbeat-database', 'firebase-heartbeat-store', 'readonly');
+    await _diagProbarEscritura('base propia de BazarHub (control)', 'bazarhub_sync', 'cols', 'readwrite');
 
     // Pedidos del MISMO TIPO que hace Firebase Auth al arrancar con una sesión
     // guardada (renovar y validar), pero con datos falsos: no tocan la sesión
@@ -1326,7 +1379,7 @@ function _diagTexto(full) {
   else if (store._offlineFallbackShown) L.push('Sin detalle de error (la carga no terminó).');
   try { if (navigator.connection) L.push('Red: ' + (navigator.connection.effectiveType || '?')); } catch (e) {}
   try { L.push(_lecturasTexto()); } catch (e) {}
-  L.push('Archivos: firebase.js v27.3 (diag. sesión) · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
+  L.push('Archivos: firebase.js v27.4 (diag. sesión) · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
   return L.join('\n');
 }
 
