@@ -274,6 +274,7 @@ function initFirebase() {
   }
   _instalarSellos();
   _instalarContador();
+  _diagEnganchar();   // v27.5: solo escucha (ver más abajo); antes de que Auth abra sus bases
   db   = firebase.firestore();
   auth = firebase.auth();
   _diagAuthIniciar();
@@ -390,6 +391,7 @@ function _ensureAuth(callback, intento = 0) {
       console.error('Auth anónima falló:', err);
       _diagAuthLog('el inicio de sesión no terminó (' + (Date.now() - _tAuth) + ' ms): ' + _diagErrTxt(err));
       _diagSondear();
+      _autoRecargarSiCuelga('el inicio de sesión no respondió');   // v27.5: recarga única y segura
       _diagRegistrar('autenticación', err);
       // Si falla la auth (ej. sin internet), intentar con caché local
       const hasLocal = loadLocalData();
@@ -1035,7 +1037,7 @@ async function _loadCollectionWithRetry(loadFn, label, attempts = 2) {
 // Firebase, caché de archivos); nunca toca las ventas pendientes de subir,
 // la copia de respaldo para trabajar sin conexión ni la sesión del usuario.
 
-// ===== DIAGNÓSTICO TEMPORAL DE LA SESIÓN (v27.4) =====
+// ===== DIAGNÓSTICO TEMPORAL DE LA SESIÓN (v27.5) =====
 // SOLO REGISTRA: no borra la sesión, la copia local ni nada, y no cambia el
 // comportamiento de la app. Guarda un historial corto (se conserva aunque se
 // vuelva a cargar) con el error REAL de Firebase Auth (code + message), cuándo
@@ -1043,7 +1045,7 @@ async function _loadCollectionWithRetry(loadFn, label, attempts = 2) {
 // (almacenamiento del navegador y red hacia Google) para saber el motivo.
 // Se ve en la ventana de diagnóstico (tocar el cartel de conexión).
 const _DIAG_AUTH_KEY = 'bazarhub_diag_auth';
-const _DIAG_AUTH_MAX = 50;
+const _DIAG_AUTH_MAX = 120;
 const _diagT0 = Date.now();   // momento en que se cargó la página
 let _diagAuthMem = [];
 let _diagSondeoTs = 0;
@@ -1093,6 +1095,111 @@ function _diagAuthTexto(max) {
   return 'Detalle de sesión (últimos ' + l.length + '):\n' + l.map(x => '  ' + x).join('\n');
 }
 
+// ===== v27.5: ESCUCHA DE LO QUE HACE FIREBASE AUTH POR DENTRO =====
+// Solo se AGREGAN avisos ("listeners"): los pedidos y las bases funcionan igual
+// que siempre, se devuelve exactamente lo mismo que devolvía el navegador. Nunca
+// se anota una clave ni el contenido de un pedido, solo la dirección sin datos.
+let _diagEnganchado = false;
+let _diagIdbCont = {};
+let _diagFetchCont = 0;
+let _autoRecargaPendiente = false;
+function _diagEnganchar() {
+  if (_diagEnganchado) return;
+  _diagEnganchado = true;
+  try { if (localStorage.getItem('bazarhub_diag_off')) return; } catch (e) {}
+  // 1) Bases de Firebase: cuándo se abren, cuánto tardan, si el navegador las cierra solo.
+  try {
+    const F = window.IDBFactory && IDBFactory.prototype;
+    if (F && typeof F.open === 'function' && !F.__bhDiag) {
+      const orig = F.open;
+      F.open = function (name) {
+        const req = orig.apply(this, arguments);
+        try {
+          const n = String(name || '');
+          if (/^firebase/i.test(n)) {
+            const t0 = Date.now();
+            _diagIdbCont[n] = (_diagIdbCont[n] || 0) + 1;
+            const k = _diagIdbCont[n];
+            const verbose = k <= 3;   // se anotan las primeras aperturas; los fallos siempre
+            if (verbose) _diagAuthLog('Firebase abre su base "' + n + '" (#' + k + ')');
+            let fin = false;
+            const tm = setTimeout(() => { if (!fin) _diagAuthLog('Firebase: la base "' + n + '" (#' + k + ') SIN RESPUESTA tras 8 s'); }, 8000);
+            req.addEventListener('success', () => {
+              fin = true; clearTimeout(tm);
+              if (verbose) _diagAuthLog('Firebase: la base "' + n + '" (#' + k + ') abrió en ' + (Date.now() - t0) + ' ms');
+              try {
+                const d = req.result;
+                d.addEventListener('close', () => _diagAuthLog('¡el navegador CERRÓ por su cuenta la base "' + n + '" (#' + k + ')!'));
+                d.addEventListener('versionchange', () => _diagAuthLog('aviso de cambio de versión en la base "' + n + '" (#' + k + ')'));
+              } catch (e) {}
+            });
+            req.addEventListener('error', () => { fin = true; clearTimeout(tm); _diagAuthLog('Firebase: la base "' + n + '" (#' + k + ') dio ERROR al abrir: ' + _diagErrTxt(req.error)); });
+            req.addEventListener('blocked', () => _diagAuthLog('Firebase: la base "' + n + '" (#' + k + ') quedó BLOQUEADA por otra pestaña'));
+          }
+        } catch (e) {}
+        return req;
+      };
+      F.__bhDiag = true;
+    }
+  } catch (e) {}
+  // 2) Pedidos de Firebase Auth: si llega a enviarlos y cuánto tardan en volver.
+  try {
+    if (typeof window.fetch === 'function' && !window.fetch.__bhDiag) {
+      const origFetch = window.fetch;
+      const envuelto = function (input, init) {
+        const p = origFetch.apply(this, arguments);
+        try {
+          let url = '';
+          try { url = (typeof input === 'string') ? input : String((input && input.url) || ''); } catch (e) {}
+          if (/(identitytoolkit|securetoken)\.googleapis\.com/.test(url) && !(init && init.__bhProbe) && _diagFetchCont < 12) {
+            _diagFetchCont++;
+            const corto = url.replace(/^https?:\/\//, '').replace(/[?#].*$/, '').slice(0, 70);
+            const t0 = Date.now();
+            let fin = false;
+            _diagAuthLog('Auth envió un pedido: ' + corto);
+            const tm = setTimeout(() => { if (!fin) _diagAuthLog('Auth: el pedido a ' + corto + ' SIN RESPUESTA tras 10 s'); }, 10000);
+            p.then(
+              r => { fin = true; clearTimeout(tm); _diagAuthLog('Auth: ' + corto + ' respondió ' + r.status + ' en ' + (Date.now() - t0) + ' ms'); },
+              e => { fin = true; clearTimeout(tm); _diagAuthLog('Auth: ' + corto + ' FALLÓ tras ' + (Date.now() - t0) + ' ms (' + _diagErrTxt(e) + ')'); }
+            );
+          }
+        } catch (e) {}
+        return p;
+      };
+      envuelto.__bhDiag = true;
+      window.fetch = envuelto;
+    }
+  } catch (e) {}
+}
+
+// Medida de alivio: si Firebase Auth no responde, se recarga la página UNA vez.
+// No borra nada (ni la copia local ni la sesión) y la carga siguiente es la normal,
+// incremental. Se evita: sin internet, con la pestaña en segundo plano (queda
+// pendiente hasta que vuelva), con una venta armada en el carrito, a menos de
+// 5 minutos de otra recarga, o después de 3 recargas en una hora.
+// Apagar en este dispositivo: localStorage.setItem('bazarhub_autoreload_off','1')
+function _autoRecargarSiCuelga(motivo) {
+  try {
+    if (localStorage.getItem('bazarhub_autoreload_off')) return false;
+    if (typeof auth !== 'undefined' && auth && auth.currentUser) { _autoRecargaPendiente = false; return false; }
+    if (!navigator.onLine) { _diagAuthLog('recarga automática: no (sin internet)'); return false; }
+    if (typeof store !== 'undefined' && store && store.cart && store.cart.length) { _diagAuthLog('recarga automática: no (hay una venta armada en el carrito)'); return false; }
+    if (document.visibilityState !== 'visible') { _autoRecargaPendiente = true; _diagAuthLog('recarga automática: pendiente hasta que la pestaña vuelva a primer plano'); return false; }
+    const ahora = Date.now();
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem('bazarhub_autoreload_hist') || '[]').filter(t => ahora - t < 3600000); } catch (e) { hist = []; }
+    if (hist.length && ahora - hist[hist.length - 1] < 300000) { _diagAuthLog('recarga automática: no (ya hubo una hace menos de 5 min)'); return false; }
+    if (hist.length >= 3) { _diagAuthLog('recarga automática: no (ya hubo 3 en la última hora)'); return false; }
+    hist.push(ahora);
+    localStorage.setItem('bazarhub_autoreload_hist', JSON.stringify(hist));
+    _autoRecargaPendiente = false;
+    _diagAuthLog('RECARGA AUTOMÁTICA de la página (' + motivo + '). No se borra nada.');
+    try { toast('Reconectando con Firebase… la página se recarga sola.', 'warn'); } catch (e) {}
+    setTimeout(() => { try { location.reload(); } catch (e) {} }, 1500);
+    return true;
+  } catch (e) { return false; }
+}
+
 function _diagAuthIniciar() {
   try {
     const app = (navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
@@ -1115,6 +1222,8 @@ function _diagAuthIniciar() {
     // si un "no pasó nada" fue porque la pestaña estaba dormida.
     document.addEventListener('visibilitychange', () => {
       try { _diagAuthLog('la pestaña pasó a ' + (document.visibilityState === 'hidden' ? 'SEGUNDO PLANO' : 'primer plano')); } catch (e) {}
+      // v27.5: si la recarga quedó pendiente porque la pestaña estaba en segundo plano
+      try { if (document.visibilityState === 'visible' && _autoRecargaPendiente && !(auth && auth.currentUser)) _autoRecargarSiCuelga('la pestaña volvió a primer plano'); } catch (e) {}
     });
     // En cada apertura se anota (solo lectura) el estado de la sesión guardada y
     // su vencimiento, para ver si las fallas coinciden con una sesión vencida.
@@ -1307,7 +1416,7 @@ async function _diagSondear() {
           const r = await fetch(url + '?key=' + encodeURIComponent(apiKey), {
             method: 'POST',
             headers: { 'Content-Type': tipo, 'X-Client-Version': 'Chrome/JsCore/9.23.0/FirebaseCore-web' },
-            body: cuerpo, cache: 'no-store', signal: ac ? ac.signal : undefined,
+            body: cuerpo, cache: 'no-store', signal: ac ? ac.signal : undefined, __bhProbe: true,
           });
           let msg = '';
           try { const j = await r.json(); msg = (j && j.error && j.error.message) || ''; } catch (e) {}
@@ -1329,7 +1438,7 @@ async function _diagSondear() {
       const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
       const to = setTimeout(() => { try { if (ac) ac.abort(); } catch (e) {} }, 8000);
       try {
-        await fetch(url + '?_p=' + Date.now(), { mode: 'no-cors', cache: 'no-store', signal: ac ? ac.signal : undefined });
+        await fetch(url + '?_p=' + Date.now(), { mode: 'no-cors', cache: 'no-store', signal: ac ? ac.signal : undefined, __bhProbe: true });
         _diagAuthLog('red hacia ' + nombre + ': responde en ' + (Date.now() - t0) + ' ms');
       } catch (e) {
         _diagAuthLog('red hacia ' + nombre + ': NO responde tras ' + (Date.now() - t0) + ' ms (' + _diagErrTxt(e) + ')');
@@ -1379,7 +1488,7 @@ function _diagTexto(full) {
   else if (store._offlineFallbackShown) L.push('Sin detalle de error (la carga no terminó).');
   try { if (navigator.connection) L.push('Red: ' + (navigator.connection.effectiveType || '?')); } catch (e) {}
   try { L.push(_lecturasTexto()); } catch (e) {}
-  L.push('Archivos: firebase.js v27.4 (diag. sesión) · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
+  L.push('Archivos: firebase.js v27.5 (diag. sesión + recarga auto) · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
   return L.join('\n');
 }
 
