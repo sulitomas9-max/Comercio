@@ -1210,6 +1210,73 @@ function _diagEnganchar() {
       window.fetch = envuelto;
     }
   } catch (e) {}
+  // 3) Cargas de Google que Auth necesita antes de renovar la sesión (v27.7):
+  // el script apis.google.com y el marco oculto /__/auth/. Solo se anota cuándo
+  // se piden, si cargan y cuánto tardan. No se cambia ni se bloquea nada.
+  try {
+    if (typeof MutationObserver === 'function' && !window.__bhDiagGoogle) {
+      window.__bhDiagGoogle = true;
+      const vistos = new WeakSet();
+      let cont = 0;
+      const esGoogle = u => /apis\.google\.com|\/__\/auth\/|gapi/i.test(String(u || ''));
+      const mirar = n => {
+        try {
+          if (!n || n.nodeType !== 1 || vistos.has(n)) return;
+          const tag = String(n.tagName || '').toUpperCase();
+          if (tag !== 'SCRIPT' && tag !== 'IFRAME') return;
+          const u = n.src || n.getAttribute('src') || '';
+          if (!esGoogle(u) || cont >= 8) return;
+          vistos.add(n); cont++;
+          const corto = String(u).replace(/^https?:\/\//, '').replace(/[?#].*$/, '').slice(0, 70);
+          const tipo = tag === 'SCRIPT' ? 'script' : 'marco';
+          const t0 = Date.now();
+          let fin = false;
+          _diagAuthLog('se pidió ' + tipo + ' de Google: ' + corto);
+          const tm = setTimeout(() => { if (!fin) _diagAuthLog('el ' + tipo + ' de Google ' + corto + ' SIN CARGAR tras 8 s'); }, 8000);
+          n.addEventListener('load', () => { fin = true; clearTimeout(tm); _diagAuthLog('cargó el ' + tipo + ' de Google ' + corto + ' en ' + (Date.now() - t0) + ' ms'); });
+          n.addEventListener('error', () => { fin = true; clearTimeout(tm); _diagAuthLog('ERROR al cargar el ' + tipo + ' de Google ' + corto + ' tras ' + (Date.now() - t0) + ' ms'); });
+        } catch (e) {}
+      };
+      const mo = new MutationObserver(lista => {
+        try { for (const m of lista) { for (const n of m.addedNodes) { mirar(n); if (n && n.querySelectorAll) { try { n.querySelectorAll('script,iframe').forEach(mirar); } catch (e) {} } } } } catch (e) {}
+      });
+      mo.observe(document.documentElement, { childList: true, subtree: true });
+      setTimeout(() => { try { mo.disconnect(); } catch (e) {} }, 30000);   // solo los primeros 30 s: no pesa en el uso diario
+    }
+  } catch (e) {}
+}
+
+// Foto de lo que pasó con los archivos de Google que Auth necesita (v27.7).
+// Solo lee: registro de pedidos del navegador, etiquetas de la página y lista
+// del caché de la app. No escribe ni borra nada.
+async function _diagGoogle(momento) {
+  try { if (localStorage.getItem('bazarhub_diag_off')) return; } catch (e) {}
+  try {
+    let dom = '';
+    try { dom = (window.FIREBASE_CONFIG || {}).authDomain || (firebase.app().options || {}).authDomain || ''; } catch (e) {}
+    _diagAuthLog('Google (' + momento + '): dominio de autenticación=' + (dom || 'ninguno') + ' · gapi=' + (typeof window.gapi) + (window.gapi ? ' (' + Object.keys(window.gapi).slice(0, 6).join(',') + ')' : ''));
+    try {
+      const sc = Array.from(document.querySelectorAll('script')).filter(x => /apis\.google\.com|gapi/i.test(x.src || '')).length;
+      const fr = Array.from(document.querySelectorAll('iframe')).filter(x => /\/__\/auth\//.test(x.src || '')).length;
+      _diagAuthLog('Google: en la página hay ' + sc + ' script(s) de apis.google.com y ' + fr + ' marco(s) de /__/auth/');
+    } catch (e) {}
+    try {
+      const rs = performance.getEntriesByType('resource').filter(x => /apis\.google\.com|\/__\/auth\//.test(x.name));
+      if (!rs.length) _diagAuthLog('Google: el navegador NO registra ningún pedido a apis.google.com ni a /__/auth/ (nunca salió)');
+      rs.slice(0, 6).forEach(x => _diagAuthLog('Google: pedido ' + String(x.name).replace(/^https?:\/\//, '').replace(/[?#].*$/, '').slice(0, 60) + ' · empezó a los ' + Math.round(x.startTime) + ' ms · duró ' + Math.round(x.duration) + ' ms · respuesta ' + (x.responseEnd > 0 ? 'completa' : 'sin terminar')));
+    } catch (e) {}
+    try {
+      if (typeof caches !== 'undefined') {
+        const esp = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r('__tiempo__'), ms))]);
+        const k = await esp(caches.keys(), 3000);
+        if (k === '__tiempo__') _diagAuthLog('Google: la lista de cachés de la app SIN RESPUESTA en 3 s');
+        else {
+          const m = await esp(caches.match('https://apis.google.com/js/api.js', { ignoreSearch: true }), 3000);
+          _diagAuthLog('Google: cachés de la app: ' + k.join(', ') + ' · api.js de Google guardado en caché: ' + (m === '__tiempo__' ? 'SIN RESPUESTA en 3 s' : (m ? 'sí' : 'no')));
+        }
+      }
+    } catch (e) { _diagAuthLog('Google: cachés: ERROR ' + _diagErrTxt(e)); }
+  } catch (e) {}
 }
 
 // Aviso en pantalla (reemplaza a la recarga automática de v27.5, que no
@@ -1265,7 +1332,7 @@ function _diagAuthIniciar() {
     setTimeout(() => {
       try { if (!localStorage.getItem('bazarhub_diag_off')) _diagLeerBaseSesion(); } catch (e) {}
     }, 2500);
-    setTimeout(() => { if (!visto) { _diagAuthLog('Firebase Auth NO informó el estado de la sesión en 8 s'); _diagSondear(); } }, 8000);
+    setTimeout(() => { if (!visto) { _diagAuthLog('Firebase Auth NO informó el estado de la sesión en 8 s'); _diagGoogle('a los 8 s'); _diagSondear(); setTimeout(() => { if (!visto) _diagGoogle('a los 15 s'); }, 7000); } }, 8000);
   } catch (e) {}
 }
 
@@ -1483,6 +1550,7 @@ async function _diagSondear() {
       sonda('https://identitytoolkit.googleapis.com/', 'inicio de sesión'),
       sonda('https://securetoken.googleapis.com/', 'renovar sesión'),
       sonda('https://firestore.googleapis.com/', 'base de datos'),
+      sonda('https://apis.google.com/js/api.js', 'script de Google (apis.google.com)'),
     ]);
   } catch (e) { _diagAuthLog('pruebas: ERROR ' + _diagErrTxt(e)); }
 }
@@ -1523,7 +1591,7 @@ function _diagTexto(full) {
   else if (store._offlineFallbackShown) L.push('Sin detalle de error (la carga no terminó).');
   try { if (navigator.connection) L.push('Red: ' + (navigator.connection.effectiveType || '?')); } catch (e) {}
   try { L.push(_lecturasTexto()); } catch (e) {}
-  L.push('Archivos: firebase.js v27.6 (diag. sesión + transacciones + aviso) · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
+  L.push('Archivos: firebase.js v27.7 (diag. + carga de scripts de Google) · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Windows|Macintosh|Linux)/) || ['?'])[0]);
   return L.join('\n');
 }
 
