@@ -474,6 +474,12 @@
           </div>
           <div id="msg-admin" class="msg" style="margin-top:8px"></div>
         </div>
+        <div class="sec" style="margin-top:6px">
+          <div class="sec-title">Copia de los datos</div>
+          <div style="font-size:13px;margin-bottom:8px">Descarga un archivo con lo que está cargado en esta pantalla (productos, ventas, movimientos, proveedores, cajas), sin contraseñas. Solo lee: no cambia nada ni consulta Firebase.</div>
+          <button class="btn pri" onclick="bhExportarDatos()">Descargar copia de los datos</button>
+          <div id="msg-export" class="msg" style="margin-top:8px"></div>
+        </div>
       </div>
 
       <!-- COMBOS -->
@@ -914,6 +920,7 @@
 <script src="dashboard.js?v=10"></script>
 <script src="importar.js?v=5"></script>
 <script src="gastos.js?v=2"></script>
+<script src="exportar.js?v=1"></script>
 
 <script>
   // Registra el Service Worker para que la app siga funcionando sin wifi.
@@ -933,6 +940,10 @@
       });
     });
   }
+</script>
+
+</body>
+</html>
 </script>
 
 </body>
