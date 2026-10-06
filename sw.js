@@ -19,7 +19,7 @@
  * nuevos de una sola vez en vez de ir goteando de a uno.
  */
 
-const CACHE_VERSION = 'bazarhub-shell-v37';
+const CACHE_VERSION = 'bazarhub-shell-v38';
 
 // Archivos propios del sitio (mismo origen) + librerías externas, con las
 // mismas versiones/URLs exactas que usa index.html hoy.
@@ -35,6 +35,7 @@ const CORE_ASSETS = [
   './dashboard.js?v=10',
   './importar.js?v=5',
   './gastos.js?v=2',
+  './exportar.js?v=1',
 ];
 
 // Recursos externos (CDN). Se cachean "mejor esfuerzo": si alguno no se
