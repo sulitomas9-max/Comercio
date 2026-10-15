@@ -417,6 +417,11 @@ async function tryRestoreSession() {
     return;
   }
 
+  // v27.8: si la app ya se abrió al instante con los datos guardados en este
+  // aparato (ver _restaurarRapido), acá solo se actualizan los datos y se
+  // vuelve a dibujar la pantalla donde estaba la persona.
+  const yaAbierta = store._restauradaRapido === true && store.currentUser && store.currentUser.id === user.id;
+  store._restauradaRapido = false;
   store.currentUser = user;
   document.getElementById('login').style.display = 'none';
   document.getElementById('app').classList.add('on');
@@ -424,7 +429,49 @@ async function tryRestoreSession() {
   applyRole();
   showLoadingOverlay(true);
   await loadFromFirebase();
-  go('ventas');
+  if (!store.currentUser) return;
+  let pagina = 'ventas';
+  if (yaAbierta) {
+    try {
+      const act = document.querySelector('.page.act');
+      if (act && act.id && act.id.indexOf('page-') === 0) pagina = act.id.slice(5);
+    } catch (e) {}
+  }
+  go(pagina);
+}
+
+// v27.8: abrir al instante, sin esperar a Firebase. Antes, al volver a la app
+// (sobre todo en iPhone, que la duerme en segundo plano) se veía la pantalla de
+// ingresar hasta que Firebase respondía, aunque la sesión seguía guardada. Ahora,
+// si hay sesión guardada y una copia de los datos de hace menos de 2 días en este
+// aparato, se entra directo con eso y Firebase se conecta de fondo (la lógica de
+// siempre sigue igual: tryRestoreSession actualiza los datos apenas conecta).
+// Para apagarlo: localStorage.setItem('bazarhub_v278_off','1') y recargar.
+function _restaurarRapido() {
+  try {
+    if (localStorage.getItem('bazarhub_v278_off')) return false;
+    if (store.currentUser) return false;
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) {}
+    if (!saved || !saved.userId) return false;
+    if (typeof loadLocalData !== 'function' || !loadLocalData()) return false;
+    const user = store.users.find(u => u.id === saved.userId);
+    if (!user) return false;
+    store.currentUser = user;
+    store._restauradaRapido = true;
+    document.getElementById('login').style.display = 'none';
+    document.getElementById('app').classList.add('on');
+    applyRole();
+    go('ventas');
+    store._offlineFallbackShown = true;
+    try { updateConnBadge(); } catch (e) {}
+    try { toast('Abriendo con los datos guardados en este aparato… actualizando', 'warn'); } catch (e) {}
+    return true;
+  } catch (e) {
+    console.warn('[BazarHub] No se pudo abrir al instante:', e);
+    try { store.currentUser = null; store._restauradaRapido = false; } catch (e2) {}
+    return false;
+  }
 }
 
 // Espera hasta que store.usersReady sea true (o se cumpla el timeout).
@@ -1014,6 +1061,11 @@ async function changeAdminPass() {
 
 // ===== INIT =====
 (function init() {
+  // v27.8: apertura inmediata con la sesión y los datos guardados (se espera a
+  // que carguen todos los scripts de la página, porque go() usa funciones de ellos).
+  if (document.readyState === 'complete') setTimeout(_restaurarRapido, 0);
+  else window.addEventListener('load', () => setTimeout(_restaurarRapido, 0));
+
   // Cargamos usuarios desde Firebase antes de mostrar el login
   waitForFirebase(async () => {
     loadDrafts();
